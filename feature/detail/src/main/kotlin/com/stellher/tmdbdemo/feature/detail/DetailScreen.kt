@@ -22,7 +22,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Collections
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.AlertDialog
@@ -58,14 +57,14 @@ import com.stellher.tmdbdemo.core.ui.Ink
 import com.stellher.tmdbdemo.core.ui.SecondaryInk
 import com.stellher.tmdbdemo.core.ui.TmdbImage
 import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
+import dev.chrisbanes.haze.HazeState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(showId: Int, repository: MediaRepository, onBack: () -> Unit) {
     val vm: DetailViewModel = viewModel(key = "details-" + showId, factory = DetailViewModel.factory(repository, showId))
     val state by vm.state.collectAsState()
-    val haze = rememberHazeState()
+    val haze = remember { HazeState() }
     val details = state.details
 
     Box(Modifier.fillMaxSize().background(Color(0xFFF5F7FC))) {

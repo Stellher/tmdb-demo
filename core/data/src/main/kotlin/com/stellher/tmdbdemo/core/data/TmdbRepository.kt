@@ -122,7 +122,7 @@ class TmdbRepository(token: String) : MediaRepository {
 
     private val detailsCache = ConcurrentHashMap<Int, TvDetails>()
     private val seasonCache = ConcurrentHashMap<String, List<TvEpisode>>()
-    private val lock = Mutex()
+    private val detailLocks = ConcurrentHashMap<Int, Mutex>()
 
     override suspend fun searchShows(query: String): List<TvShow> {
         if (query.isBlank()) return emptyList()
@@ -134,7 +134,7 @@ class TmdbRepository(token: String) : MediaRepository {
     override suspend fun getDetails(id: Int): TvDetails {
         detailsCache[id]?.let { return it }
         // Avoid duplicated requests from rapid search-to-detail transitions.
-        return lock.withLock {
+        return detailLocks.getOrPut(id) { Mutex() }.withLock {
             detailsCache[id]?.let { return@withLock it }
             val dto = api.details(id)
             val mapped = TvDetails(

@@ -50,13 +50,13 @@ import com.stellher.tmdbdemo.core.ui.Ink
 import com.stellher.tmdbdemo.core.ui.SecondaryInk
 import com.stellher.tmdbdemo.core.ui.TmdbImage
 import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
+import dev.chrisbanes.haze.HazeState
 
 @Composable
 fun SearchScreen(repository: MediaRepository, onSelected: (Int) -> Unit) {
     val vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(repository))
     val state by vm.state.collectAsState()
-    val haze = rememberHazeState()
+    val haze = remember { HazeState() }
     val results = remember(state.shows, state.animeOnly) {
         if (state.animeOnly) state.shows.filter { it.isAnimation } else state.shows
     }

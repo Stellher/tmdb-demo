@@ -33,6 +33,7 @@ data class SearchUiState(
     val animeOnly: Boolean = false
 )
 
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
     private val queryFlow = MutableStateFlow("辉夜")
     private val _state = MutableStateFlow(SearchUiState())
@@ -40,7 +41,6 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            @OptIn(kotlinx.coroutines.FlowPreview::class)
             queryFlow.debounce(420).distinctUntilChanged().collectLatest { query ->
                 _state.update { it.copy(query = query, loading = true, error = null) }
                 if (query.isBlank()) {
