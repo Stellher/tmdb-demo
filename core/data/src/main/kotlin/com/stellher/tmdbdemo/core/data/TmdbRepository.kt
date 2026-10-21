@@ -2,6 +2,12 @@ package com.stellher.tmdbdemo.core.data
 
 import com.google.gson.annotations.SerializedName
 import com.stellher.tmdbdemo.core.model.MediaRepository
+import com.stellher.tmdbdemo.core.model.MediaSearchItem
+import com.stellher.tmdbdemo.core.model.MediaSearchPage
+import com.stellher.tmdbdemo.core.model.MediaType
+import com.stellher.tmdbdemo.core.model.MovieDetails
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import com.stellher.tmdbdemo.core.model.TvDetails
 import com.stellher.tmdbdemo.core.model.TvEpisode
 import com.stellher.tmdbdemo.core.model.TvSeason
@@ -22,8 +28,23 @@ private interface TmdbApi {
     suspend fun searchShows(
         @Query("query") query: String,
         @Query("language") language: String = "zh-CN",
-        @Query("include_adult") adult: Boolean = false
+        @Query("include_adult") adult: Boolean = false,
+        @Query("page") page: Int = 1
     ): SearchDto
+
+    @GET("search/movie")
+    suspend fun searchMovies(
+        @Query("query") query: String,
+        @Query("language") language: String = "zh-CN",
+        @Query("include_adult") adult: Boolean = false,
+        @Query("page") page: Int = 1
+    ): MovieSearchDto
+
+    @GET("movie/{id}")
+    suspend fun movieDetails(
+        @Path("id") id: Int,
+        @Query("language") language: String = "zh-CN"
+    ): MovieDto
 
     @GET("tv/{id}")
     suspend fun details(
@@ -39,9 +60,31 @@ private interface TmdbApi {
     ): SeasonDto
 }
 
-private data class SearchDto(val results: List<ShowDto> = emptyList())
+private data class SearchDto(
+    val results: List<ShowDto> = emptyList(),
+    @SerializedName("total_pages") val totalPages: Int = 1
+)
 
-private data class GenreDto(val id: Int = 0)
+private data class MovieSearchDto(
+    val results: List<MovieDto> = emptyList(),
+    @SerializedName("total_pages") val totalPages: Int = 1
+)
+
+private data class MovieDto(
+    val id: Int = 0,
+    val title: String? = null,
+    @SerializedName("original_title") val originalTitle: String? = null,
+    val overview: String? = null,
+    @SerializedName("release_date") val releaseDate: String? = null,
+    @SerializedName("poster_path") val posterPath: String? = null,
+    @SerializedName("backdrop_path") val backdropPath: String? = null,
+    @SerializedName("genre_ids") val genreIds: List<Int>? = null,
+    val genres: List<GenreDto>? = null,
+    val runtime: Int? = null,
+    @SerializedName("vote_average") val voteAverage: Double? = null
+)
+
+private data class GenreDto(val id: Int = 0, val name: String? = null)
 
 private data class ShowDto(
     val id: Int = 0,
@@ -102,6 +145,33 @@ private fun ShowDto.asModel(): TvShow = TvShow(
     lastAiredEpisode = lastEpisode?.asModel()
 )
 
+private fun ShowDto.asSearchItem() = MediaSearchItem(
+    id = id, type = MediaType.TV,
+    title = name?.takeIf { it.isNotBlank() } ?: originalName.orEmpty(),
+    originalTitle = originalName.orEmpty(), overview = overview.orEmpty(),
+    date = firstAirDate, posterPath = posterPath, backdropPath = backdropPath,
+    isAnimation = 16 in genreIds.orEmpty() || genres.orEmpty().any { it.id == 16 },
+    countries = originCountry.orEmpty(),
+    numberOfEpisodes = numberOfEpisodes,
+    lastAiredEpisode = lastEpisode?.asModel()
+)
+
+private fun MovieDto.asSearchItem() = MediaSearchItem(
+    id = id, type = MediaType.MOVIE,
+    title = title?.takeIf { it.isNotBlank() } ?: originalTitle.orEmpty(),
+    originalTitle = originalTitle.orEmpty(), overview = overview.orEmpty(),
+    date = releaseDate, posterPath = posterPath, backdropPath = backdropPath,
+    isAnimation = 16 in genreIds.orEmpty() || genres.orEmpty().any { it.id == 16 }
+)
+
+private fun MovieDto.asDetails() = MovieDetails(
+    id = id, title = title?.takeIf { it.isNotBlank() } ?: originalTitle.orEmpty(),
+    originalTitle = originalTitle.orEmpty(), overview = overview.orEmpty(),
+    releaseDate = releaseDate, posterPath = posterPath, backdropPath = backdropPath,
+    runtimeMinutes = runtime, genres = genres.orEmpty().mapNotNull { it.name },
+    rating = voteAverage
+)
+
 class TmdbRepository(token: String) : MediaRepository {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -121,8 +191,39 @@ class TmdbRepository(token: String) : MediaRepository {
         .create(TmdbApi::class.java)
 
     private val detailsCache = ConcurrentHashMap<Int, TvDetails>()
+    private val movieCache = ConcurrentHashMap<Int, MovieDetails>()
     private val seasonCache = ConcurrentHashMap<String, List<TvEpisode>>()
     private val detailLocks = ConcurrentHashMap<Int, Mutex>()
+
+    /**
+     * Query movie and TV endpoints independently; /search/multi may underrepresent
+     * one category in its first page, and includes people we don't want.
+     * Interleaving gives both media types visible positions on the first screen.
+     */
+    override suspend fun searchMedia(query: String, page: Int): MediaSearchPage = coroutineScope {
+        if (query.isBlank()) return@coroutineScope MediaSearchPage(emptyList(), false)
+        val cleaned = query.trim()
+        val tvRequest = async { api.searchShows(cleaned, page = page) }
+        val movieRequest = async { api.searchMovies(cleaned, page = page) }
+        val tv = tvRequest.await()
+        val movies = movieRequest.await()
+        val tvItems = tv.results.filter { it.id > 0 }.map { it.asSearchItem() }
+        val movieItems = movies.results.filter { it.id > 0 }.map { it.asSearchItem() }
+        val merged = buildList {
+            for (index in 0 until maxOf(tvItems.size, movieItems.size)) {
+                tvItems.getOrNull(index)?.let(::add)
+                movieItems.getOrNull(index)?.let(::add)
+            }
+        }.distinctBy { it.type to it.id }
+        MediaSearchPage(merged, page < tv.totalPages || page < movies.totalPages)
+    }
+
+    override suspend fun getMovieDetails(id: Int): MovieDetails {
+        movieCache[id]?.let { return it }
+        val details = api.movieDetails(id).asDetails()
+        movieCache[id] = details
+        return details
+    }
 
     override suspend fun searchShows(query: String): List<TvShow> {
         if (query.isBlank()) return emptyList()
