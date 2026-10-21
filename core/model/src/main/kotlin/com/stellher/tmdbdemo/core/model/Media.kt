@@ -44,7 +44,49 @@ data class TvDetails(
 )
 
 interface MediaRepository {
+    suspend fun searchMedia(query: String, page: Int = 1): MediaSearchPage
+    suspend fun getMovieDetails(id: Int): MovieDetails
     suspend fun searchShows(query: String): List<TvShow>
     suspend fun getDetails(id: Int): TvDetails
     suspend fun getSeason(id: Int, season: Int): List<TvEpisode>
+}
+
+/** Media type is part of the identity: movie/123 and tv/123 are distinct. */
+enum class MediaType { TV, MOVIE }
+
+data class MediaSearchItem(
+    val id: Int,
+    val type: MediaType,
+    val title: String,
+    val originalTitle: String,
+    val overview: String,
+    val date: String?,
+    val posterPath: String?,
+    val backdropPath: String?,
+    val isAnimation: Boolean,
+    val countries: List<String> = emptyList(),
+    val numberOfEpisodes: Int? = null,
+    val lastAiredEpisode: TvEpisode? = null
+) {
+    val year: String get() = date?.take(4)?.ifBlank { null } ?: "未知年份"
+}
+
+data class MediaSearchPage(
+    val items: List<MediaSearchItem>,
+    val hasMore: Boolean
+)
+
+data class MovieDetails(
+    val id: Int,
+    val title: String,
+    val originalTitle: String,
+    val overview: String,
+    val releaseDate: String?,
+    val posterPath: String?,
+    val backdropPath: String?,
+    val runtimeMinutes: Int?,
+    val genres: List<String>,
+    val rating: Double?
+) {
+    val year: String get() = releaseDate?.take(4)?.ifBlank { null } ?: "未知年份"
 }
