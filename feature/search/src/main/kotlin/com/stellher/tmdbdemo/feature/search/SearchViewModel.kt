@@ -7,6 +7,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.stellher.tmdbdemo.core.model.MediaRepository
 import com.stellher.tmdbdemo.core.model.TvShow
+import com.stellher.tmdbdemo.core.model.TvDetails
+import com.stellher.tmdbdemo.core.model.TitleNormalizer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -28,6 +30,8 @@ import kotlinx.coroutines.sync.withPermit
 data class SearchUiState(
     val query: String = "辉夜",
     val shows: List<TvShow> = emptyList(),
+    val detailsById: Map<Int, TvDetails> = emptyMap(),
+    val requestedSeason: Int? = null,
     val loading: Boolean = true,
     val error: String? = null,
     val animeOnly: Boolean = false
@@ -48,8 +52,9 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
                     return@collectLatest
                 }
                 try {
-                    val shows = repository.searchShows(query)
-                    _state.update { it.copy(shows = shows, loading = false) }
+                    val intent = TitleNormalizer.parse(query)
+                    val shows = repository.searchShows(intent.name)
+                    _state.update { it.copy(shows = shows, detailsById = emptyMap(), requestedSeason = intent.requestedSeason, loading = false) }
                     // Enrich only the first nine cards; cap concurrent detail requests at three.
                     supervisorScope {
                         val semaphore = Semaphore(3)
@@ -57,11 +62,11 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
                             async {
                                 semaphore.withPermit {
                                     try {
-                                        val updated = repository.getDetails(item.id).show
+                                        val details = repository.getDetails(item.id)
                                         if (currentCoroutineContext().isActive) {
                                             _state.update { old ->
                                                 if (old.query != query) old else old.copy(
-                                                    shows = old.shows.map { if (it.id == item.id) updated else it }
+                                                    detailsById = old.detailsById + (item.id to details)
                                                 )
                                             }
                                         }
@@ -74,7 +79,7 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
                 } catch (cancel: CancellationException) { throw cancel }
                 catch (e: Exception) {
                     _state.update {
-                        it.copy(loading = false, shows = emptyList(),
+                        it.copy(loading = false, shows = emptyList(), detailsById = emptyMap(),
                             error = if (e.message?.contains("401") == true) "TMDB 访问令牌无效或缺失"
                             else "搜索失败，请检查网络或稍后重试")
                     }

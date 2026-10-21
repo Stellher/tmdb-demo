@@ -27,7 +27,7 @@ data class DetailUiState(
     val selectedEpisode: TvEpisode? = null
 )
 
-class DetailViewModel(private val repository: MediaRepository, private val showId: Int) : ViewModel() {
+class DetailViewModel(private val repository: MediaRepository, private val showId: Int, private val preferredSeason: Int?) : ViewModel() {
     private val _state = MutableStateFlow(DetailUiState())
     val state: StateFlow<DetailUiState> = _state.asStateFlow()
     private var seasonJob: Job? = null
@@ -36,7 +36,8 @@ class DetailViewModel(private val repository: MediaRepository, private val showI
         viewModelScope.launch {
             try {
                 val details = repository.getDetails(showId)
-                val initial = details.seasons.firstOrNull { it.number == 1 }?.number
+                val initial = details.seasons.firstOrNull { it.number == preferredSeason }?.number
+                    ?: details.seasons.firstOrNull { it.number == 1 }?.number
                     ?: details.seasons.firstOrNull { it.number > 0 }?.number
                     ?: details.seasons.firstOrNull()?.number ?: 1
                 _state.update { it.copy(loading = false, details = details, selectedSeason = initial) }
@@ -68,8 +69,8 @@ class DetailViewModel(private val repository: MediaRepository, private val showI
     fun dismissEpisode() { _state.update { it.copy(selectedEpisode = null) } }
 
     companion object {
-        fun factory(repo: MediaRepository, id: Int): ViewModelProvider.Factory = viewModelFactory {
-            initializer { DetailViewModel(repo, id) }
+        fun factory(repo: MediaRepository, id: Int, preferredSeason: Int?): ViewModelProvider.Factory = viewModelFactory {
+            initializer { DetailViewModel(repo, id, preferredSeason) }
         }
     }
 }

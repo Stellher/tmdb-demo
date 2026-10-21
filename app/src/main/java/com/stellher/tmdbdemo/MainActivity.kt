@@ -64,16 +64,19 @@ class MainActivity : ComponentActivity() {
                         val nav = rememberNavController()
                         NavHost(navController = nav, startDestination = "search") {
                             composable("search") {
-                                SearchScreen(repository = repository, onSelected = { id ->
-                                    nav.navigate("details/" + id)
+                                SearchScreen(repository = repository, onSelected = { id, season ->
+                                    nav.navigate("details/" + id + "?season=" + (season ?: -1))
                                 })
                             }
                             composable(
-                                route = "details/{id}",
-                                arguments = listOf(navArgument("id") { type = NavType.IntType })
+                                route = "details/{id}?season={season}",
+                                arguments = listOf(
+                                    navArgument("id") { type = NavType.IntType },
+                                    navArgument("season") { type = NavType.IntType; defaultValue = -1 }
+                                )
                             ) { entry ->
                                 val id = entry.arguments?.getInt("id") ?: return@composable
-                                DetailScreen(showId = id, repository = repository, onBack = {
+                                DetailScreen(showId = id, initialSeason = entry.arguments?.getInt("season")?.takeIf { it > 0 }, repository = repository, onBack = {
                                     nav.popBackStack()
                                 })
                             }

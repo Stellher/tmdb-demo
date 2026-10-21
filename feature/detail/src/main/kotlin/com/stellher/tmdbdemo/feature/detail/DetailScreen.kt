@@ -61,8 +61,8 @@ import dev.chrisbanes.haze.HazeState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailScreen(showId: Int, repository: MediaRepository, onBack: () -> Unit) {
-    val vm: DetailViewModel = viewModel(key = "details-" + showId, factory = DetailViewModel.factory(repository, showId))
+fun DetailScreen(showId: Int, initialSeason: Int?, repository: MediaRepository, onBack: () -> Unit) {
+    val vm: DetailViewModel = viewModel(key = "details-" + showId + "-" + initialSeason, factory = DetailViewModel.factory(repository, showId, initialSeason))
     val state by vm.state.collectAsState()
     val haze = remember { HazeState() }
     val details = state.details

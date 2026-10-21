@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.stellher.tmdbdemo.core.model.MediaRepository
 import com.stellher.tmdbdemo.core.model.TvShow
+import com.stellher.tmdbdemo.core.model.TvSeason
 import com.stellher.tmdbdemo.core.ui.GlassPanel
 import com.stellher.tmdbdemo.core.ui.ImageKind
 import com.stellher.tmdbdemo.core.ui.Ink
@@ -53,12 +54,20 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.HazeState
 
 @Composable
-fun SearchScreen(repository: MediaRepository, onSelected: (Int) -> Unit) {
+fun SearchScreen(repository: MediaRepository, onSelected: (Int, Int?) -> Unit) {
     val vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(repository))
     val state by vm.state.collectAsState()
     val haze = remember { HazeState() }
-    val results = remember(state.shows, state.animeOnly) {
-        if (state.animeOnly) state.shows.filter { it.isAnimation } else state.shows
+    val results = remember(state.shows, state.detailsById, state.animeOnly, state.requestedSeason) {
+        state.shows.filter { !state.animeOnly || it.isAnimation }
+            .flatMap { show ->
+                val detail = state.detailsById[show.id]
+                val seasons = detail?.seasons.orEmpty().filter { it.number > 0 }
+                    .filter { state.requestedSeason == null || it.number == state.requestedSeason }
+                    .take(12)
+                if (seasons.isEmpty()) listOf(SearchCardItem(show, null))
+                else seasons.map { SearchCardItem(detail!!.show, it) }
+            }
     }
     Box(Modifier.fillMaxSize().background(Color(0xFFF5F7FC))) {
         LazyColumn(
@@ -79,12 +88,12 @@ fun SearchScreen(repository: MediaRepository, onSelected: (Int) -> Unit) {
             } else if (results.isEmpty()) {
                 item { Text("暂无匹配作品，试试其他片名", color = SecondaryInk, modifier = Modifier.padding(20.dp)) }
             } else {
-                items(results.chunked(3), key = { row -> row.joinToString("-") { it.id.toString() } }) { row ->
+                items(results.chunked(3), key = { row -> row.joinToString("-") { it.show.id.toString() + "_" + (it.season?.number ?: -1) } }) { row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         repeat(3) { column ->
                             if (column < row.size) {
                                 Box(Modifier.weight(1f)) {
-                                    ShowCard(row[column]) { onSelected(row[column].id) }
+                                    ShowCard(row[column]) { onSelected(row[column].show.id, row[column].season?.number ?: state.requestedSeason) }
                                 }
                             } else {
                                 Spacer(Modifier.weight(1f))
@@ -127,14 +136,18 @@ fun SearchScreen(repository: MediaRepository, onSelected: (Int) -> Unit) {
     }
 }
 
+private data class SearchCardItem(val show: TvShow, val season: TvSeason?)
+
 @Composable
-private fun ShowCard(show: TvShow, onClick: () -> Unit) {
+private fun ShowCard(card: SearchCardItem, onClick: () -> Unit) {
+    val show = card.show
+    val season = card.season
     Column(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(0.72f).clip(RoundedCornerShape(13.dp))) {
-            TmdbImage(show.posterPath, ImageKind.Poster, Modifier.fillMaxSize(), description = show.title)
+            TmdbImage(season?.posterPath ?: show.posterPath, ImageKind.Poster, Modifier.fillMaxSize(), description = show.title)
             Box(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(52.dp).background(
                     Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.76f)))
@@ -142,6 +155,7 @@ private fun ShowCard(show: TvShow, onClick: () -> Unit) {
             )
             val update = show.lastAiredEpisode
             val status = when {
+                season != null -> "全" + season.episodeCount + "集"
                 update != null -> "更新至第" + update.number + "集"
                 show.numberOfEpisodes != null && show.numberOfEpisodes > 0 -> "共" + show.numberOfEpisodes + "集"
                 else -> "查看剧集"
@@ -153,10 +167,10 @@ private fun ShowCard(show: TvShow, onClick: () -> Unit) {
                 maxLines = 1
             )
         }
-        Text(show.title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        Text(show.title + (season?.let { " · 第" + it.number + "季" } ?: ""), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
             color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
-            show.year + " / " + (if (show.isAnimation) "动画" else "剧集") +
+            (season?.airDate?.take(4) ?: show.year) + " / " + (if (show.isAnimation) "动画" else "剧集") +
                 (show.originCountries.firstOrNull()?.let { " / " + it } ?: ""),
             fontSize = 10.sp, color = SecondaryInk, maxLines = 1,
             overflow = TextOverflow.Ellipsis

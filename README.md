@@ -5,6 +5,7 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 ## Features
 
 - Search TV series in Chinese via TMDB API v3, debounced text entry
+- Strip season suffixes (e.g. 第二季/S02) from search keywords, carry the desired season into detail navigation, and expand TMDB series into season-specific cards where season data is available
 - 3-column poster results implemented using **LazyColumn** rows, with year, type, country and progressively enriched latest episode / total episode count
 - Full TV detail metadata + season navigation, including special episodes (season 0)
 - Horizontal, landscape-still episode cards with title, air date, and runtime
