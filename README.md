@@ -18,7 +18,7 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 
 | Module | Responsibility |
 |---|---|
-| :app | Application, composition root, navigation, token bootstrap |
+| :app | Application, composition root, navigation, built-in demo token |
 | :core:model | Repository interface + platform-independent domain objects |
 | :core:data | Retrofit, Gson, OkHttp auth, DTO mapping, in-memory detail cache |
 | :core:ui | SaaS visual palette, shared media image, Haze glass |
@@ -29,25 +29,17 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 
 Android Studio supporting AGP 8.13.2, JDK 17, Android SDK 36, Gradle 8.13; minSdk 26 / targetSdk 35. Open this repository as a Gradle project.
 
-**Do not commit the TMDB token to a public repository.** This repository is public. The token is injected at build time through Gradle properties/environment and becomes part of the APK. It can still be extracted from the APK, so use restricted credentials and consider a backend proxy for production.
+## Demo authentication & APK
 
-Local development:
+The TMDB **API Read Access Token is intentionally hardcoded** in `app/build.gradle.kts` for this disposable demo. The app starts directly on the search screen, with no token input and no GitHub Secret requirement.
 
 ```bash
-# Put the API Read Access Token in ~/.gradle/gradle.properties (NOT this repository):
-# tmdbToken=YOUR_TMDB_API_READ_ACCESS_TOKEN
 ./gradlew :app:assembleRelease
 ```
 
-Or:
+GitHub Actions automatically builds on pushes to `main`; you can also trigger [Android release APK](https://github.com/Stellher/tmdb-demo/actions/workflows/release.yml) manually. After a successful run, download artifact `tmdb-demo-release`. It is signed with a **temporary demo signing key** that changes on each run and is not suitable for production app updates.
 
-```bash
-TMDB_READ_TOKEN="YOUR_TMDB_API_READ_ACCESS_TOKEN" ./gradlew :app:assembleRelease
-```
-
-GitHub Actions: configure **Settings → Secrets and variables → Actions → New repository secret** with name **TMDB_READ_TOKEN**, then run **Actions → Android release APK → Run workflow**. The workflow also runs on main pushes. Download the `tmdb-demo-release` artifact once the job succeeds.
-
-The Actions workflow also runs JVM tests for the season-title normalizer. It creates a **temporary signing key** for each demo APK. This is not a stable production release identity; configure your own persistent upload/signing key before shipping updates. The demo can be built without a token but then presents a temporary in-app token entry screen rather than silently failing.
+Because this repository is public, the test credential is in both the APK and public Git history. **Revoke/regenerate the credential after testing**; deleting the source line later does not erase Git history.
 
 The Gradle 8.13 wrapper files are included (official Gradle 8.13.0 scripts and binary). Use `./gradlew` or `gradlew.bat` in Android Studio's terminal.
 

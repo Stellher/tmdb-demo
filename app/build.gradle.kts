@@ -3,10 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
-val tmdbToken = providers.gradleProperty("tmdbToken")
-    .orElse(providers.environmentVariable("TMDB_READ_TOKEN"))
-    .orElse("")
-val token = tmdbToken.get().replace("\\", "\\\\").replace("\"", "\\\"")
+
+// Demo only: intentionally embedded test credential.
+val tmdbReadToken = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI3YTZhNzMyNmQyY2U5MjkwOTQ3OTJjYjVhMjA3NGE5ZiIsIm5iZiI6MTc3ODc3NjU3NS43MzksInN1YiI6IjZhMDVmOWZmNWJiMDgwYWNhNWRiMTkwOSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.qr2TASl1r8j_bpfVua4JX6f9ja9LKwLSjNTo9FWDKGI"
+
 android {
     namespace = "com.stellher.tmdbdemo"
     compileSdk = 36
@@ -16,11 +16,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
-        buildConfigField("String", "TMDB_READ_TOKEN", "\"" + token + "\"")
+        buildConfigField("String", "TMDB_READ_TOKEN", "\"" + tmdbReadToken + "\"")
     }
     buildFeatures { compose = true; buildConfig = true }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    // The CI's temporary demo signing key is intentionally NOT suitable for real production releases.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     signingConfigs {
         create("demoRelease") {
             val path = System.getenv("DEMO_KEYSTORE_PATH")
@@ -41,7 +43,9 @@ android {
         }
     }
 }
-kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+}
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:data"))
