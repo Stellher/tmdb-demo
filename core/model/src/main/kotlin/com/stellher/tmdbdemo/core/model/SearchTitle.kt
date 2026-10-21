@@ -23,12 +23,12 @@ object TitleNormalizer {
         if (value == "十") return 10
         val tens = if (value.startsWith("十")) 10 else if ('十' in value) {
             val prefix = value.substringBefore('十')
-            val digit = chars.indexOf(prefix.firstOrNull()).takeIf { it >= 0 }?.plus(1)
+            val digit = prefix.singleOrNull()?.let { chars.indexOf(it) }?.takeIf { it >= 0 }?.plus(1)
             (digit ?: return null) * 10
         } else 0
         val onesText = if ('十' in value) value.substringAfter('十') else value
         if (onesText.isBlank()) return tens
-        val one = chars.indexOf(onesText.firstOrNull()).takeIf { it >= 0 }?.plus(1) ?: return null
+        val one = onesText.singleOrNull()?.let { chars.indexOf(it) }?.takeIf { it >= 0 }?.plus(1) ?: return null
         return tens + one
     }
 }

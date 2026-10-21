@@ -46,7 +46,7 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
     init {
         viewModelScope.launch {
             queryFlow.debounce(420).distinctUntilChanged().collectLatest { query ->
-                _state.update { it.copy(query = query, loading = true, error = null) }
+                _state.update { it.copy(query = query, loading = true, error = null, shows = emptyList(), detailsById = emptyMap(), requestedSeason = null) }
                 if (query.isBlank()) {
                     _state.update { it.copy(shows = emptyList(), loading = false) }
                     return@collectLatest
