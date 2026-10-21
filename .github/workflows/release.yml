@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+concurrency:
+  group: android-release-main
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -29,7 +32,7 @@ jobs:
       - name: Build signed release demo
         env:
           TMDB_READ_TOKEN: ${{ secrets.TMDB_READ_TOKEN }}
-        run: gradle :app:assembleRelease --stacktrace
+        run: ./gradlew :core:model:test :app:assembleRelease --stacktrace --no-daemon
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:

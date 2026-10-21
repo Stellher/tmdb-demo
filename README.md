@@ -36,20 +36,20 @@ Local development:
 ```bash
 # Put the API Read Access Token in ~/.gradle/gradle.properties (NOT this repository):
 # tmdbToken=YOUR_TMDB_API_READ_ACCESS_TOKEN
-gradle :app:assembleRelease
+./gradlew :app:assembleRelease
 ```
 
 Or:
 
 ```bash
-TMDB_READ_TOKEN="YOUR_TMDB_API_READ_ACCESS_TOKEN" gradle :app:assembleRelease
+TMDB_READ_TOKEN="YOUR_TMDB_API_READ_ACCESS_TOKEN" ./gradlew :app:assembleRelease
 ```
 
 GitHub Actions: configure **Settings → Secrets and variables → Actions → New repository secret** with name **TMDB_READ_TOKEN**, then run **Actions → Android release APK → Run workflow**. The workflow also runs on main pushes. Download the `tmdb-demo-release` artifact once the job succeeds.
 
-The Actions workflow creates a **temporary signing key** for each demo APK. This is not a stable production release identity; configure your own persistent upload/signing key before shipping updates. The demo can be built without a token but then presents a temporary in-app token entry screen rather than silently failing.
+The Actions workflow also runs JVM tests for the season-title normalizer. It creates a **temporary signing key** for each demo APK. This is not a stable production release identity; configure your own persistent upload/signing key before shipping updates. The demo can be built without a token but then presents a temporary in-app token entry screen rather than silently failing.
 
-For a standard Gradle wrapper, run `gradle wrapper --gradle-version 8.13` once locally and commit the generated wrapper scripts and verified binary JAR. CI installs Gradle 8.13 independently.
+The Gradle 8.13 wrapper files are included (official Gradle 8.13.0 scripts and binary). Use `./gradlew` or `gradlew.bat` in Android Studio's terminal.
 
 ## API use
 

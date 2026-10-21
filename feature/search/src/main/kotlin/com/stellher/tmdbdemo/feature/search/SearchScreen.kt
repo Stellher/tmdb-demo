@@ -102,6 +102,13 @@ fun SearchScreen(repository: MediaRepository, onSelected: (Int, Int?) -> Unit) {
                     }
                 }
             }
+            item {
+                Text(
+                    "本产品使用 TMDB API，但未经 TMDB 认可或认证。",
+                    color = SecondaryInk, fontSize = 10.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+            }
         }
         GlassPanel(
             hazeState = haze,
