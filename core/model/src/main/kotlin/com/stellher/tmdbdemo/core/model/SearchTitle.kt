@@ -4,12 +4,12 @@ data class SearchTitle(val name: String, val requestedSeason: Int?)
 
 object TitleNormalizer {
     private val seasonSuffix = Regex(
-        """(?:[\\s·._:：-]*)(?:第\\s*([0-9一二三四五六七八九十]+)\\s*季|S(?:eason)?\\s*0?([0-9]{1,2})|([0-9]{1,2})(?:st|nd|rd|th)\\s+Season)$""",
+        """(?:[\s·._:：-]*)(?:第\s*([0-9一二三四五六七八九十]+)\s*季|S(?:eason)?\s*0?([0-9]{1,2})|([0-9]{1,2})(?:st|nd|rd|th)\s+Season)$""",
         RegexOption.IGNORE_CASE
     )
 
     fun parse(raw: String): SearchTitle {
-        val cleaned = raw.trim().replace(Regex("""[\\u3000\\s]+"""), " ")
+        val cleaned = raw.trim().replace('　', ' ').replace(Regex("""\s+"""), " ")
         val match = seasonSuffix.find(cleaned) ?: return SearchTitle(cleaned, null)
         val value = match.groupValues.drop(1).firstOrNull { it.isNotEmpty() }
         val season = value?.toIntOrNull() ?: chineseNumber(value.orEmpty())
