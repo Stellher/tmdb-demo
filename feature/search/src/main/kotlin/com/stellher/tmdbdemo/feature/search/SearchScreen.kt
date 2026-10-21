@@ -164,7 +164,7 @@ private fun ShowCard(card: SearchCardItem, onClick: () -> Unit) {
             val status = when {
                 season != null -> "全" + season.episodeCount + "集"
                 update != null -> "更新至第" + update.number + "集"
-                show.numberOfEpisodes != null && show.numberOfEpisodes > 0 -> "共" + show.numberOfEpisodes + "集"
+                (show.numberOfEpisodes ?: 0) > 0 -> "共" + show.numberOfEpisodes + "集"
                 else -> "查看剧集"
             }
             Text(
