@@ -111,19 +111,27 @@ fun MovieDetailScreen(
                         if (movie.genres.isNotEmpty()) {
                             Text(movie.genres.joinToString(" · "), color = SecondaryInk, fontSize = 12.sp)
                         }
+                        MovieEpisodeSection(movie, vm::openSelection)
                         Text("电影简介", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text(movie.overview.ifBlank { "TMDB 暂无中文简介" },
                             color = SecondaryInk, fontSize = 14.sp, lineHeight = 23.sp)
                         if (movie.originalTitle.isNotBlank() && movie.originalTitle != movie.title) {
                             Text("原名：" + movie.originalTitle, color = SecondaryInk, fontSize = 12.sp)
                         }
-                        Text("电影没有 TV 季度/选集；以上资料来自 TMDB。",
+                        Text("正片是本应用生成的选集入口，实际播放需提供合法的片源 URL；TMDB 不提供完整电影视频。",
                             color = SecondaryInk, fontSize = 11.sp)
                     }
                 }
             }
         }
 
+        if (state.selectionVisible && state.movie != null) {
+            MovieSourceSheet(state.movie!!, state.playbackUrl, state.playbackError,
+                vm::changeUrl, vm::playMovie, vm::closeSelection)
+        }
+        if (state.playerVisible && state.movie != null) {
+            MoviePlayerDialog(state.playbackUrl, state.movie!!.title, vm::closePlayer)
+        }
         GlassPanel(
             hazeState = haze, radius = 100,
             modifier = Modifier.align(Alignment.TopStart).padding(start = 14.dp, top = 12.dp)

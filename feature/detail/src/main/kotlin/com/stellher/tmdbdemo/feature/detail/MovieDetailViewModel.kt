@@ -17,7 +17,11 @@ import kotlinx.coroutines.launch
 data class MovieUiState(
     val loading: Boolean = true,
     val movie: MovieDetails? = null,
-    val error: String? = null
+    val error: String? = null,
+    val selectionVisible: Boolean = false,
+    val playbackUrl: String = "",
+    val playbackError: String? = null,
+    val playerVisible: Boolean = false
 )
 
 class MovieDetailViewModel(repository: MediaRepository, movieId: Int) : ViewModel() {
@@ -34,6 +38,21 @@ class MovieDetailViewModel(repository: MediaRepository, movieId: Int) : ViewMode
             }
         }
     }
+
+    fun openSelection() { _state.update { it.copy(selectionVisible = true, playbackError = null) } }
+    fun closeSelection() { _state.update { it.copy(selectionVisible = false, playbackError = null) } }
+    fun changeUrl(url: String) { _state.update { it.copy(playbackUrl = url, playbackError = null) } }
+    fun playMovie() {
+        val url = _state.value.playbackUrl.trim()
+        val parsed = android.net.Uri.parse(url)
+        if (parsed.scheme?.lowercase() != "https" || parsed.host.isNullOrBlank()) {
+            _state.update { it.copy(playbackError = "请输入有效的 HTTPS 视频地址") }
+            return
+        }
+        _state.update { it.copy(playbackUrl = url, selectionVisible = false,
+            playerVisible = true, playbackError = null) }
+    }
+    fun closePlayer() { _state.update { it.copy(playerVisible = false) } }
 
     companion object {
         fun factory(repository: MediaRepository, movieId: Int): ViewModelProvider.Factory =
