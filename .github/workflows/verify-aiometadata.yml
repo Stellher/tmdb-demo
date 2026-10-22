@@ -1,74 +1,29 @@
-name: Validate ReZero multi-season mapping via AIOMetadata
+name: Probe AniCh search backend for ReZero
 on:
   push:
     branches: [verification/aiometadata-live]
-  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  inspect-rezero:
+  anich:
     runs-on: ubuntu-latest
     steps:
-      - name: Search and inspect ReZero all seasons and episode images
-        shell: bash
+      - name: Check public AniCh /bangumi/search and episode endpoints
         run: |
           python3 - <<'PY'
-          import json,urllib.request,urllib.parse,urllib.error,collections,sys
-          configs={
-              "tmdb":"https://aiometadata.elfhosted.com/stremio/5d428e69-5edf-413b-979b-8b34c9078c26",
-              "tvdb_alternate":"https://aiometadata.elfhosted.com/stremio/7249187b-263a-481f-b493-140e97634442",
-              "tvdb_default":"https://aiometadata.elfhosted.com/stremio/0bce5d2e-9971-4b32-8091-a5f876c8c6e9",
-          }
-          def get(url,timeout=35):
-              try:
-                  request=urllib.request.Request(url,headers={"User-Agent":"Sparkle-TMDB-ReZero-mapping-check/1.0","Accept":"application/json"})
-                  with urllib.request.urlopen(request,timeout=timeout) as r:
-                      return r.status,json.load(r)
-              except Exception as e:
-                  print("ERROR",url,str(e)[:180],flush=True);return 0,{}
-          main={}
-          for conf,root in configs.items():
-              for q in ["Re:Zero","Re:从零开始的异世界生活"]:
-                  path="/catalog/series/search.series/search="+urllib.parse.quote(q,safe="")+".json"
-                  st,data=get(root+path)
-                  items=data.get("metas") or []
-                  print("SEARCH_TV",json.dumps({"config":conf,"query":q,"http":st,"total":len(items),
-                    "sample":[{k:x.get(k) for k in ["id","name","releaseInfo","type","poster"]} for x in items[:12]]},ensure_ascii=False)[:5500],flush=True)
-                  matches=[x for x in items if "zero" in x.get("name","").lower() or "零" in x.get("name","")]
-                  if matches and conf not in main:main[conf]=matches[0]
-          for conf,root in configs.items():
-              item=main.get(conf)
-              if not item:
-                  print("NO_MAIN_TV",conf);continue
-              mediaid=item.get("id","")
-              st,data=get(root+"/meta/series/"+urllib.parse.quote(mediaid,safe=":")+".json")
-              meta=data.get("meta") or {}
-              videos=meta.get("videos") or []
-              groups=collections.defaultdict(list)
-              for ep in videos:groups[ep.get("season")].append(ep)
-              print("META",json.dumps({
-                  "config":conf,"http":st,"id":mediaid,"name":meta.get("name"),
-                  "tmdb_id":meta.get("_tmdbId"),"tvdb_id":meta.get("_tvdbId"),
-                  "videos":len(videos),"keys":list(videos[0].keys()) if videos else [],
-                  "seasons":[{"season":s,"count":len(v),"stills":sum(bool(x.get("thumbnail")) for x in v),
-                    "first":{k:v[0].get(k) for k in ["id","title","season","episode","released","thumbnail"]},
-                    "last":{k:v[-1].get(k) for k in ["title","episode","released"]}
-                    } for s,v in sorted(groups.items(),key=lambda p:p[0] if isinstance(p[0],int) else 999)]
-              },ensure_ascii=False)[:14000],flush=True)
-          for q in ["Re:Zero","Re:ZERO -Starting Life in Another World-","Re:ゼロから始める異世界生活"]:
-              root=configs["tmdb"]
-              st,data=get(root+"/catalog/anime.series/search.anime_series/search="+urllib.parse.quote(q,safe="")+".json")
-              arr=data.get("metas") or []
-              print("SEARCH_MAL",json.dumps({"query":q,"http":st,"count":len(arr),
-                  "first15":[{"id":x.get("id"),"name":x.get("name")} for x in arr[:15]]},ensure_ascii=False)[:5000],flush=True)
-              relevant=[x for x in arr if any(t in x.get("name","").lower() for t in ["re:zero","re: zero","re:ゼロ","re:ゼロ","re: zero"])]
-              for item in relevant[:4]:
-                  mid=item["id"]
-                  st,info=get(root+"/meta/anime.series/"+urllib.parse.quote(mid,safe=":")+".json")
-                  meta=info.get("meta") or {}
-                  videos=meta.get("videos") or []
-                  groups=collections.Counter(ep.get("season") for ep in videos)
-                  print("MAL_META",json.dumps({"id":mid,"name":meta.get("name"),"http":st,"tmdb":meta.get("_tmdbId"),
-                    "videos":len(videos),"seasons":dict(groups),
-                    "sample":[{k:x.get(k) for k in ["id","season","episode","title","released","thumbnail"]} for x in videos[:2]]},ensure_ascii=False)[:3000],flush=True)
+          import urllib.request,urllib.error,urllib.parse
+          q=urllib.parse.quote("Re:从零开始的异世界生活",safe="")
+          for base in ["https://api.emmmm.eu.org","https://ani.emmmm.eu.org"]:
+              for path in ["/bangumi/search?keyword="+q+"&skip=0","/bangumi/search?keyword=Re%3AZero&skip=0"]:
+                  url=base+path
+                  request=urllib.request.Request(url,headers={"User-Agent":"xs Android 1.0.0","Accept":"application/octet-stream"})
+                  try:
+                      with urllib.request.urlopen(request,timeout=14) as response:
+                          raw=response.read(500000)
+                          print("SEARCH_STATUS",{"host":base,"query":path.split("keyword=")[1].split("&")[0],
+                              "status":response.status,"ctype":response.headers.get("content-type"),
+                              "bytes":len(raw),"first_bytes":raw[:28].hex()},flush=True)
+                  except urllib.error.HTTPError as ex:
+                      print("SEARCH_ERROR",{"host":base,"code":ex.code,"text":ex.read(160).decode(errors="replace")},flush=True)
+                  except Exception as ex:print("SEARCH_ERROR",base,str(ex)[:140],flush=True)
           PY
