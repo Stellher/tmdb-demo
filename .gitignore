@@ -5,5 +5,7 @@
 *.apk
 *.aab
 *.jks
+# Deliberately tracked public DEMO signing key; never copy this into production.
+!app/signing/tmdb-demo-release.jks
 *.keystore
 .DS_Store

@@ -14,8 +14,9 @@ android {
         applicationId = "com.stellher.tmdbdemo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI builds have monotonically increasing codes for in-place upgrades.
+        versionCode = 10000 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "1.1." + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
         buildConfigField("String", "TMDB_READ_TOKEN", "\"" + tmdbReadToken + "\"")
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -24,22 +25,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     signingConfigs {
+        // Fixed keystore tracked for this disposable demo only.
         create("demoRelease") {
-            val path = System.getenv("DEMO_KEYSTORE_PATH")
-            if (!path.isNullOrBlank()) {
-                storeFile = file(path)
-                storePassword = System.getenv("DEMO_KEYSTORE_PASSWORD")
-                keyAlias = System.getenv("DEMO_KEY_ALIAS")
-                keyPassword = System.getenv("DEMO_KEY_PASSWORD")
-            }
+            storeFile = rootProject.file("app/signing/tmdb-demo-release.jks")
+            storePassword = "tmdb-demo-2026"
+            keyAlias = "tmdb-demo"
+            keyPassword = "tmdb-demo-2026"
         }
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
-            if (!System.getenv("DEMO_KEYSTORE_PATH").isNullOrBlank()) {
-                signingConfig = signingConfigs.getByName("demoRelease")
-            }
+            signingConfig = signingConfigs.getByName("demoRelease")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

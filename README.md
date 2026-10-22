@@ -38,9 +38,14 @@ The TMDB **API Read Access Token is intentionally hardcoded** in `app/build.grad
 ./gradlew :app:assembleRelease
 ```
 
-GitHub Actions automatically builds on pushes to `main`; you can also trigger [Android release APK](https://github.com/Stellher/tmdb-demo/actions/workflows/release.yml) manually. After a successful run, download artifact `tmdb-demo-release`. It is signed with a **temporary demo signing key** that changes on each run and is not suitable for production app updates.
+GitHub Actions automatically builds on pushes to `main`; you can also trigger [Android release APK](https://github.com/Stellher/tmdb-demo/actions/workflows/release.yml) manually. After a successful run, download artifact `tmdb-demo-release`. All future builds use the same `app/signing/tmdb-demo-release.jks` test certificate, with increasing GitHub run-number-based `versionCode`. The Release build enables `isMinifyEnabled=true`, `isShrinkResources=true`, and `proguard-android-optimize.txt`. CI checks the fixed certificate SHA-256 after signing. The signing key is intentionally public **only** for this throwaway demo, not for production apps.
 
 Because this repository is public, the test credential is in both the APK and public Git history. **Revoke/regenerate the credential after testing**; deleting the source line later does not erase Git history.
+
+**Migration:** APKs before this change were signed using a fresh random key on every build. They cannot be overwritten by this new stable signing key. Uninstall the old Demo once, then future builds from this change can be installed over each other (same applicationId and higher versionCode).
+
+Test signing certificate SHA-256:
+`1D:B7:9B:85:3E:9C:EC:DA:97:C2:EE:2A:79:08:A5:36:6E:73:5C:BD:E4:32:CE:19:05:2C:07:B8:C3:4C:4D:F6`.
 
 The Gradle 8.13 wrapper files are included (official Gradle 8.13.0 scripts and binary). Use `./gradlew` or `gradlew.bat` in Android Studio's terminal.
 

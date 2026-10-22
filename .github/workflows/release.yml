@@ -27,15 +27,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Generate temporary demo signing key
-        run: |
-          keytool -genkeypair -v -keystore "$RUNNER_TEMP/demo-release.jks" -storepass demo-store-password -alias demo -keypass demo-store-password -keyalg RSA -keysize 3072 -validity 3650 -dname "CN=TMDB Demo,O=Demo,C=US"
-          echo "DEMO_KEYSTORE_PATH=$RUNNER_TEMP/demo-release.jks" >> "$GITHUB_ENV"
-          echo "DEMO_KEYSTORE_PASSWORD=demo-store-password" >> "$GITHUB_ENV"
-          echo "DEMO_KEY_ALIAS=demo" >> "$GITHUB_ENV"
-          echo "DEMO_KEY_PASSWORD=demo-store-password" >> "$GITHUB_ENV"
       - name: Build signed release APK (built-in test token)
         run: ./gradlew :core:model:test :app:assembleRelease --stacktrace --no-daemon
+      - name: Verify stable demo signature and optimized APK
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}/build-tools/36.0.0/apksigner"
+          test -f "$APK"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee signing-report.txt
+          grep -qi "1db79b853e9cecda97c2ee2a7908a5366e735cbde432ce19052c07b8c34c4df6" signing-report.txt
+          echo "Verified expected fixed signing certificate"
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
