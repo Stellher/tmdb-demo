@@ -1,4 +1,4 @@
-name: Compare Bungo seasons via TVDB and inspect first-episode stills
+name: Probe Bungo Stray Dogs anime series using romanized and Japanese queries
 on:
   push:
     branches: [verification/aiometadata-live]
@@ -6,79 +6,33 @@ on:
 permissions:
   contents: read
 jobs:
-  inspect-tvdb:
+  inspect-mal:
     runs-on: ubuntu-latest
     steps:
-      - name: Compare TVDB season mapping to existing TMDB metadata
-        shell: bash
+      - name: Fetch per-season MAL results and their episode stills
         run: |
           python3 - <<'PY'
-          import json,urllib.request,urllib.parse,urllib.error,secrets,collections
-          host="https://aiometadata.elfhosted.com"
-          old=host+"/stremio/5d428e69-5edf-413b-979b-8b34c9078c26"
-          def get(u):
+          import json,urllib.request,urllib.parse
+          root="https://aiometadata.elfhosted.com/stremio/5d428e69-5edf-413b-979b-8b34c9078c26"
+          def get(url):
+              with urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"Sparkle-Demo-season-lookup/1.0"}),timeout=40) as r:return r.status,json.load(r)
+          queries=["Bungou Stray Dogs","Bungou Stray Dogs 2nd Season","文豪ストレイドッグス","Bungo Stray Dogs 4th Season"]
+          done=set()
+          for q in queries:
+              url=root+"/catalog/anime.series/search.anime_series/search="+urllib.parse.quote(q,safe="")+".json"
               try:
-                  request=urllib.request.Request(u,headers={"User-Agent":"Sparkle-Metadata-season-evaluation/1.0","Accept":"application/json"})
-                  with urllib.request.urlopen(request,timeout=38) as r: return r.status,json.load(r)
-              except Exception as exc:
-                  print("ERROR",str(exc)[:270],u,flush=True)
-                  return 0,{}
-          def post(u,data):
-              req=urllib.request.Request(u,headers={"Content-Type":"application/json","Accept":"application/json","User-Agent":"Sparkle-Metadata-season-evaluation/1.0"},
-                  data=json.dumps(data).encode(),method="POST")
-              try:
-                  with urllib.request.urlopen(req,timeout=45) as r: return r.status,json.load(r)
-              except urllib.error.HTTPError as e:
-                  print("POST_ERR",e.code,e.read(900).decode(errors="replace"),flush=True);return e.code,{}
-              except Exception as e:
-                  print("POST_ERR",str(e),flush=True);return 0,{}
-          config={
-              "language":"zh-CN","addonName":"Sparkle Metadata TVDB Comparison",
-              "includeAdult":False,"sfw":True,"searchEnabled":True,"catalogModeOnly":False,
-              "hideStremioCatalogs":True,
-              "providers":{"movie":"tmdb","series":"tvdb","anime":"mal","anime_id_provider":"imdb","forceAnimeForDetectedImdb":False},
-              "artProviders":{"movie":{"poster":"meta","background":"meta","logo":"meta"},
-                  "series":{"poster":"meta","background":"meta","logo":"meta"},
-                  "anime":{"poster":"meta","background":"meta","logo":"meta"},
-                  "englishArtOnly":False,"originalLangFallback":False},
-              "mal":{"skipFiller":False,"skipRecap":False,"allowEpisodeMarking":False},
-              "tvdbSeasonType":"default","tvdbNormalizeYearSeasons":False,
-              "tmdb":{"scrapeImdb":False},"apiKeys":{"tmdb":"","tvdb":"","fanart":"","rpdb":"","mdblist":""},
-              "catalogs":[],"search":{"enabled":True,"ai_enabled":False,
-                  "providers":{"movie":"tmdb.search","series":"tvdb.search",
-                      "anime_series":"mal.search.series","anime_movie":"mal.search.movie"},
-                  "engineEnabled":{"tmdb.search":True,"tvdb.search":True,"mal.search.series":True,"mal.search.movie":True},
-                  "searchOrder":["movie","series","anime_series","anime_movie"]}
-          }
-          st,x=post(host+"/api/config/save",{"config":config,"password":secrets.token_urlsafe(28)})
-          print("SAVE",st,"URL",x.get("installUrl"),flush=True)
-          if st!=200: raise SystemExit(1)
-          new=x["installUrl"].removesuffix("/manifest.json")
-          st,manifest=get(new+"/manifest.json")
-          print("MANIFEST",st,[(v.get("id"),v.get("type")) for v in manifest.get("catalogs",[]) if v.get("id","").startswith("search.")],flush=True)
-          st,res=get(new+"/catalog/series/search.series/search="+urllib.parse.quote("文豪野犬")+".json")
-          print("TVDB_SEARCH",st,[{"id":v.get("id"),"name":v.get("name")} for v in res.get("metas",[])[:9]],flush=True)
-          for label,root in [("TMDB",old),("TVDB",new)]:
-              st,r=get(root+"/meta/series/tt5679720.json")
-              m=r.get("meta",{})
-              eps=m.get("videos") or []
-              groups=collections.defaultdict(list)
-              for e in eps:groups[e.get("season")].append(e)
-              print("SERIES",json.dumps({"provider":label,"status":st,"name":m.get("name"),
-                  "tmdbId":m.get("_tmdbId"),"tvdbId":m.get("_tvdbId"),"videos":len(eps),
-                  "seasons":[{"s":s,"n":len(items),"still_count":sum(bool(e.get("thumbnail")) for e in items),
-                              "sample":[{"episode":e.get("episode"),"title":e.get("title"),
-                                         "release":e.get("released"),"thumbnail":e.get("thumbnail")}
-                                        for e in items[:2]]}
-                             for s,items in sorted(groups.items(),key=lambda v:v[0] if isinstance(v[0],int) else 999)]},ensure_ascii=False)[:22000],flush=True)
-          # Global episode ranges of 60-item TMDB "season 1" represent anime seasons.
-          st,r=get(old+"/meta/series/tt5679720.json")
-          eps=[v for v in r.get("meta",{}).get("videos",[]) if v.get("season")==1]
-          for start,end,season in [(1,12,1),(13,24,2),(25,36,3),(37,49,4),(50,60,5)]:
-              if len(eps)>=end:
-                  e=eps[start-1];f=eps[end-1]
-                  print("TMDB_GLOBAL_SEGMENT",json.dumps({"season":season,"episode_global_range":[start,end],
-                    "first_name":e.get("title"),"first_date":e.get("released"),
-                    "first_thumbnail":e.get("thumbnail"),"last_date":f.get("released"),
-                    "last_thumbnail":f.get("thumbnail")},ensure_ascii=False),flush=True)
+                  code,response=get(url)
+                  arr=response.get("metas",[])
+                  print("MAL_SEARCH",json.dumps({"query":q,"status":code,"count":len(arr),"results":[{"id":x.get("id"),"name":x.get("name")} for x in arr[:15]]},ensure_ascii=False),flush=True)
+                  for item in arr:
+                      mid=item.get("id",""); name=item.get("name","")
+                      if mid in done or not (mid.startswith("mal:") and ("Bungo" in name or "Bungou" in name or "文豪" in name)):continue
+                      if len(done)>=9:break
+                      done.add(mid)
+                      st,detail=get(root+"/meta/anime.series/"+mid+".json")
+                      m=detail.get("meta",{});videos=m.get("videos") or []
+                      print("MAL_META",json.dumps({"id":mid,"status":st,"name":m.get("name"),"tmdbId":m.get("_tmdbId"),
+                          "video_count":len(videos),"season_counts":{str(s):sum(1 for e in videos if e.get("season")==s) for s in set(e.get("season") for e in videos)},
+                          "episode_one":[{k:e.get(k) for k in ["title","id","season","episode","thumbnail","released"]} for e in videos[:1]]},ensure_ascii=False),flush=True)
+              except Exception as exc:print("ERR",q,str(exc)[:300],flush=True)
           PY
