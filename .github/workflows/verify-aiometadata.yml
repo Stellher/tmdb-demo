@@ -1,0 +1,31 @@
+name: Verify public AIOMetadata HTTP endpoints
+on:
+  push:
+    branches: [verification/aiometadata-live]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public endpoints without user config
+        shell: bash
+        run: |
+          set -u
+          for base in             "https://aiometadata.elfhosted.com"             "https://aiometadata.12312023.xyz"             "https://aiometadata.viren070.me"             "https://aiometadata.forthewizards.uk"; do
+            echo "===== HOST ${base} ====="
+            for path in "/health" "/configure/" "/manifest.json" "/api/config" "/meta/movie/tmdb:129.json"; do
+              output="$(curl -sSL --max-time 15 --connect-timeout 7                 -H 'Accept: application/json, text/html;q=0.8'                 -o /tmp/aiometadata-body -w '%{http_code}|%{content_type}|%{size_download}|%{url_effective}'                 "${base}${path}" 2>/tmp/aiometadata-curl-stderr)"
+              code="${output%%|*}"
+              echo "PATH ${path} => ${output}"
+              if [[ "${code}" == "000" ]]; then
+                sed -E 's#https?://[^ /]+#[host]#g' /tmp/aiometadata-curl-stderr | head -c 350
+                echo
+              elif [[ "${code}" == "200" ]] && jq -e . /tmp/aiometadata-body >/dev/null 2>&1; then
+                # Report only non-sensitive keys/counts. Never print provider API keys.
+                jq -cr 'if .catalogs then {name,version,types,catalogs_count:(.catalogs|length),resources_count:(.resources|length)} elif .meta then {media_id:.meta.id,media_type:.meta.type,title:.meta.name,has_poster:(.meta.poster!=null)} elif type=="object" then {json_keys:(keys|sort)} else {json_type:type} end' /tmp/aiometadata-body | head -c 600
+                echo
+              fi
+            done
+          done
