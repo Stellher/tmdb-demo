@@ -1,4 +1,4 @@
-name: Verify and create AIO Metadata demo configuration
+name: Inspect Bungo Stray Dogs AIOMetadata seasons and stills
 on:
   push:
     branches: [verification/aiometadata-live]
@@ -6,105 +6,62 @@ on:
 permissions:
   contents: read
 jobs:
-  create-config:
+  inspect:
     runs-on: ubuntu-latest
     steps:
-      - name: Provision one temporary AIOMetadata config and probe metadata APIs
+      - name: Fetch Bungo Stray Dogs searches, TMDB mapping and episode posters
         shell: bash
         run: |
           python3 - <<'PY'
-          import json, os, secrets, urllib.parse, urllib.request, urllib.error
-          base = "https://aiometadata.elfhosted.com"
-          def call(url, obj=None, timeout=20):
-              body = None if obj is None else json.dumps(obj).encode()
-              req = urllib.request.Request(url, data=body,
-                  headers={"Accept":"application/json", "User-Agent":"Sparkle-TMDB-demo-metadata-validation/1.0",
-                           **({"Content-Type":"application/json"} if body else {})},
-                  method="POST" if body else "GET")
+          import json, urllib.request, urllib.parse, collections, urllib.error, time
+          base="https://aiometadata.elfhosted.com/stremio/5d428e69-5edf-413b-979b-8b34c9078c26"
+          def get(url):
+              req=urllib.request.Request(url,headers={"User-Agent":"TMDB-Demo-metadata-study/1.0","Accept":"application/json"})
               try:
-                  with urllib.request.urlopen(req, timeout=timeout) as response:
-                      data = response.read(500000)
-                      try: payload = json.loads(data)
-                      except: payload = {"non_json":data[:200].decode(errors="replace")}
-                      return response.status, payload
-              except urllib.error.HTTPError as e:
-                  print(f"HTTP ERROR {e.code} at {url.split('?')[0]}")
-                  try: print(e.read(900).decode(errors="replace"))
-                  except: pass
-                  return e.code, {}
+                  with urllib.request.urlopen(req, timeout=35) as x:
+                      data=json.load(x); return x.status,data
               except Exception as e:
-                  print("REQUEST FAILED: "+type(e).__name__+": "+str(e)[:200])
-                  return 0, {}
-          status, server = call(base+"/api/config")
-          print("INSTANCE_CONFIG http="+str(status))
-          print("BUILTIN_KEYS "+json.dumps({k:server.get(k) for k in ["hasBuiltInTmdb","hasBuiltInTvdb","jikanEnabled","anilistRequiresAuth"]}))
-          if status!=200 or not server.get("hasBuiltInTmdb"):
-              print("SKIP: instance has no built-in TMDB API key")
-              raise SystemExit(1)
-          # Password generated only on this CI runner. It is not stored or printed.
-          password=secrets.token_urlsafe(32)
-          defaults = {
-              "language":"zh-CN", "addonName":"Sparkle Metadata Test",
-              "includeAdult":False, "sfw":True, "searchEnabled":True,
-              "catalogModeOnly":False,"hideStremioCatalogs":True,
-              "castCount":8, "usePosterProxy":False,
-              "providers":{"movie":"tmdb","series":"tmdb","anime":"mal",
-                           "anime_id_provider":"imdb","forceAnimeForDetectedImdb":False},
-              "artProviders":{
-                  "movie":{"poster":"meta","background":"meta","logo":"meta"},
-                  "series":{"poster":"meta","background":"meta","logo":"meta"},
-                  "anime":{"poster":"meta","background":"meta","logo":"meta"},
-                  "englishArtOnly":False,"originalLangFallback":False
-              },
-              "mal":{"skipFiller":False,"skipRecap":False,"allowEpisodeMarking":False},
-              "tmdb":{"scrapeImdb":False,"forceLatinCastNames":False},
-              "apiKeys":{"tmdb":"","tvdb":"","fanart":"","rpdb":"","mdblist":"","gemini":""},
-              "catalogs":[],
-              "search":{
-                  "enabled":True,"ai_enabled":False,
-                  "providers":{"movie":"tmdb.search","series":"tmdb.search",
-                               "anime_series":"mal.search.series","anime_movie":"mal.search.movie"},
-                  "engineEnabled":{
-                      "tmdb.search":True,"mal.search.series":True,"mal.search.movie":True,
-                      "tvdb.collections.search":False,"gemini.search":False,
-                      "people_search_movie":False,"people_search_series":False
-                  },
-                  "searchOrder":["movie","series","anime_series","anime_movie"]
-              }
-          }
-          status, saved = call(base+"/api/config/save",
-                               {"config":defaults, "password":password},timeout=28)
-          print("SAVED_STATUS",status)
-          if status!=200 or not saved.get("installUrl"):
-              print("CONFIG_SAVE_FAILED " + json.dumps(saved, ensure_ascii=False)[:500])
-              raise SystemExit(1)
-          url=saved["installUrl"]
-          print("MANIFEST_URL "+url)
-          status, manifest=call(url, timeout=30)
-          print("MANIFEST_STATUS",status)
-          catalogs=manifest.get("catalogs",[])
-          searches=[{"id":x.get("id"),"type":x.get("type"),"name":x.get("name")} for x in catalogs if x.get("id","").startswith("search.")]
-          print("MANIFEST_SUMMARY "+json.dumps({"name":manifest.get("name"),"types":manifest.get("types"),
-                 "resources":manifest.get("resources"),"searches":searches},ensure_ascii=False)[:2500])
-          if status!=200 or not searches: raise SystemExit(1)
-          root=url.rsplit("/manifest.json",1)[0]
-          for kind,text in [("movie","千与千寻"),("series","辉夜大小姐"),("anime.series","辉夜大小姐")]:
-              choices=[i for i in searches if i["type"]==kind]
-              if not choices: print("SEARCH_SKIPPED type="+kind); continue
-              c=choices[0]
-              q=urllib.parse.quote(text, safe="")
-              search_url=root+"/catalog/"+kind+"/"+c["id"]+"/search="+q+".json"
-              status,response=call(search_url,timeout=32)
-              metas=response.get("metas",[])
-              summary=[{"id":x.get("id"),"name":x.get("name"),"type":x.get("type"),"poster":bool(x.get("poster"))}
-                       for x in metas[:3]]
-              print("SEARCH_PROBE "+json.dumps({"kind":kind,"query":text,"status":status,
-                  "results":len(metas),"sample":summary},ensure_ascii=False)[:2000])
-              if status==200 and metas and kind in ("movie","series"):
-                  mid=urllib.parse.quote(str(metas[0]["id"]),safe=":")
-                  st,meta=call(root+"/meta/"+kind+"/"+mid+".json",timeout=28)
-                  value=meta.get("meta",{})
-                  print("META_PROBE "+json.dumps({"kind":kind,"status":st,"id":value.get("id"),
-                         "name":value.get("name"),"keys":sorted(value.keys())[:35],
-                         "videos":len(value.get("videos",[]) or [])},ensure_ascii=False)[:1700])
+                  print("ERR",url,type(e).__name__,str(e)[:280],flush=True);return 0,{}
+          def safeitem(i):
+              return {k:i.get(k) for k in ["id","name","type","releaseInfo","poster","year"] if i.get(k) is not None}
+          found={}
+          for kind,cat in [("series","search.series"),("anime.series","search.anime_series"),("movie","search.movie"),("anime.movie","search.anime_movie")]:
+              q=urllib.parse.quote("文豪野犬",safe="")
+              url=f"{base}/catalog/{kind}/{cat}/search={q}.json"
+              code,response=get(url)
+              items=response.get("metas",[])
+              print("SEARCH",json.dumps({"kind":kind,"url":url,"status":code,"total":len(items),
+                                        "items":[safeitem(i) for i in items[:12]]},ensure_ascii=False),flush=True)
+              found[kind]=items
+          # Test the first 2 relevant series plus one relevant movie; verify actual results, don't invent IDs.
+          for kind in ["series","anime.series","movie","anime.movie"]:
+              items=found.get(kind,[])
+              matching=[i for i in items if "文豪" in i.get("name","") or "Bungo" in i.get("name","") or "Bungou" in i.get("name","")]
+              for i in matching[:2 if kind in ("series","anime.series") else 1]:
+                  mediaid=i.get("id","")
+                  url=f"{base}/meta/{kind}/{urllib.parse.quote(mediaid,safe=':')}.json"
+                  code,response=get(url)
+                  obj=response.get("meta",{})
+                  episodes=obj.get("videos") or []
+                  byseason=collections.defaultdict(list)
+                  for episode in episodes:
+                      season=episode.get("season")
+                      byseason[str(season)].append(episode)
+                  print("META_SUMMARY",json.dumps({
+                      "kind":kind,"url":url,"status":code,
+                      "name":obj.get("name"),"id":obj.get("id"),
+                      "poster":obj.get("poster"),"background":obj.get("background"),
+                      "tmdb_id":obj.get("_tmdbId"),"tvdb_id":obj.get("_tvdbId"),
+                      "total_videos":len(episodes),
+                      "video_keys":list(episodes[0].keys()) if episodes else [],
+                      "seasons":[{"season":s,"total":len(es),
+                                  "has_thumbnail":sum(bool(e.get("thumbnail")) for e in es),
+                                  "has_image":sum(bool(e.get("image")) for e in es),
+                                  "number_first":es[0].get("episode"),"number_last":es[-1].get("episode")}
+                                  for s,es in sorted(byseason.items(),key=lambda x:(int(x[0]) if x[0].lstrip('-').isdigit() else 9999))],
+                      "episode_examples":[
+                          {"season":s,"episodes":[{k:e.get(k) for k in ["id","season","episode","title","name","released","thumbnail","image","description"] if k in e}
+                                                  for e in es[:3]]}
+                          for s,es in sorted(byseason.items(),key=lambda x:(int(x[0]) if x[0].lstrip('-').isdigit() else 9999))]
+                      },ensure_ascii=False)[:19000],flush=True)
           PY
