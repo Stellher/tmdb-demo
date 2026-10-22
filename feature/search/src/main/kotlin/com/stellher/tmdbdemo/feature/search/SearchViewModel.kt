@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.stellher.tmdbdemo.core.model.MediaRepository
 import com.stellher.tmdbdemo.core.model.MediaSearchItem
+import com.stellher.tmdbdemo.core.model.MediaSearchPage
 import com.stellher.tmdbdemo.core.model.MediaType
 import com.stellher.tmdbdemo.core.model.TitleNormalizer
 import com.stellher.tmdbdemo.core.model.TvDetails
@@ -14,6 +15,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,8 +31,29 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-// "ALL" maps to null (TV + MOVIE); other filters match the /search endpoint.
 private data class SearchRequest(val query: String, val type: MediaType?)
+
+private class SourceBucket {
+    val items = mutableListOf<MediaSearchItem>()
+    var fetched = false
+    var nextPage: Int? = 1
+
+    fun addPage(page: MediaSearchPage, pageNumber: Int, hasMore: Boolean) {
+        (items + page.items).distinctBy { it.type to it.id }.let {
+            items.clear()
+            items.addAll(it)
+        }
+        fetched = true
+        nextPage = if (hasMore) pageNumber + 1 else null
+    }
+}
+
+private class CachedQuery {
+    val tv = SourceBucket()
+    val movies = SourceBucket()
+    val tvDetails = mutableMapOf<Int, TvDetails>()
+    var suggestedTitle: String? = null
+}
 
 data class SearchUiState(
     val query: String = "辉夜",
@@ -51,7 +74,65 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
     private val filterFlow = MutableStateFlow<MediaType?>(null)
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
+
+    // Scoped to this ViewModel: switching tabs reuses the exact loaded objects and
+    // season metadata. Cache is bounded to avoid retaining unlimited search history.
+    private val cache = LinkedHashMap<String, CachedQuery>()
     private var moreJob: Job? = null
+
+    private fun cached(query: String): CachedQuery = cache.getOrPut(query) {
+        if (cache.size >= 8) cache.remove(cache.keys.first())
+        CachedQuery()
+    }
+
+    private fun matches(request: SearchRequest): Boolean =
+        queryFlow.value == request.query && filterFlow.value == request.type
+
+    private fun needsFetch(data: CachedQuery, type: MediaType?): Boolean = when (type) {
+        MediaType.TV -> !data.tv.fetched
+        MediaType.MOVIE -> !data.movies.fetched
+        null -> !data.tv.fetched || !data.movies.fetched
+    }
+
+    private fun visibleItems(data: CachedQuery, type: MediaType?): List<MediaSearchItem> = when (type) {
+        MediaType.TV -> data.tv.items.toList()
+        MediaType.MOVIE -> data.movies.items.toList()
+        null -> {
+            val tv = data.tv.items
+            val movies = data.movies.items
+            buildList {
+                for (i in 0 until maxOf(tv.size, movies.size)) {
+                    tv.getOrNull(i)?.let(::add)
+                    movies.getOrNull(i)?.let(::add)
+                }
+            }
+        }
+    }
+
+    private fun hasMore(data: CachedQuery, type: MediaType?): Boolean = when (type) {
+        MediaType.TV -> data.tv.fetched && data.tv.nextPage != null
+        MediaType.MOVIE -> data.movies.fetched && data.movies.nextPage != null
+        null -> (data.tv.fetched && data.tv.nextPage != null) ||
+            (data.movies.fetched && data.movies.nextPage != null)
+    }
+
+    private fun publish(request: SearchRequest, loading: Boolean = false) {
+        if (!matches(request)) return
+        val data = cache[request.query]
+        val items = data?.let { visibleItems(it, request.type) }.orEmpty()
+        _state.update { it.copy(
+            query = request.query,
+            filter = request.type,
+            loading = loading,
+            items = items,
+            loadingMore = false,
+            nextPage = if (data != null && hasMore(data, request.type)) 1 else null,
+            requestedSeason = TitleNormalizer.parse(request.query).requestedSeason,
+            suggestedTitle = data?.suggestedTitle,
+            detailsById = data?.tvDetails?.toMap().orEmpty(),
+            error = null
+        ) }
+    }
 
     init {
         viewModelScope.launch {
@@ -59,115 +140,180 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
                 SearchRequest(query, type)
             }.distinctUntilChanged().collectLatest { request ->
                 moreJob?.cancel()
-                _state.update {
-                    it.copy(query = request.query, filter = request.type,
-                        loading = true, loadingMore = false, items = emptyList(),
-                        detailsById = emptyMap(), requestedSeason = null,
-                        suggestedTitle = null, nextPage = null, error = null)
-                }
+                if (!matches(request)) return@collectLatest
                 if (request.query.isBlank()) {
-                    _state.update { it.copy(loading = false) }
+                    publish(request)
                     return@collectLatest
                 }
+                val entry = cached(request.query)
+                publish(request, loading = needsFetch(entry, request.type))
                 try {
-                    val parsed = TitleNormalizer.parse(request.query)
-                    val page = repository.searchMedia(parsed.name, 1, request.type)
-                    _state.update { current ->
-                        if (!matches(request, current)) current else current.copy(
-                            items = page.items,
-                            requestedSeason = parsed.requestedSeason,
-                            suggestedTitle = page.suggestedTitle,
-                            nextPage = if (page.hasMore) 2 else null,
-                            loading = false
-                        )
+                    val title = TitleNormalizer.parse(request.query).name
+                    when (request.type) {
+                        MediaType.TV -> if (!entry.tv.fetched) {
+                            val page = repository.searchMedia(title, 1, MediaType.TV)
+                            if (matches(request)) {
+                                entry.tv.addPage(page, 1, page.tvHasMore)
+                                entry.suggestedTitle = page.suggestedTitle
+                            }
+                        }
+                        MediaType.MOVIE -> if (!entry.movies.fetched) {
+                            val page = repository.searchMedia(title, 1, MediaType.MOVIE)
+                            if (matches(request)) {
+                                entry.movies.addPage(page, 1, page.movieHasMore)
+                                entry.suggestedTitle = page.suggestedTitle
+                            }
+                        }
+                        null -> {
+                            if (!entry.tv.fetched && !entry.movies.fetched) {
+                                // One combined request already queries both endpoints,
+                                // and populates both category caches for instant switching.
+                                val page = repository.searchMedia(title, 1, null)
+                                if (matches(request)) {
+                                    entry.tv.addPage(page.copy(
+                                        items = page.items.filter { it.type == MediaType.TV }
+                                    ), 1, page.tvHasMore)
+                                    entry.movies.addPage(page.copy(
+                                        items = page.items.filter { it.type == MediaType.MOVIE }
+                                    ), 1, page.movieHasMore)
+                                    entry.suggestedTitle = page.suggestedTitle
+                                }
+                            } else if (!entry.tv.fetched || !entry.movies.fetched) {
+                                // Tab was initially searched alone; load only the missing
+                                // endpoint when switching to All.
+                                val pending = coroutineScope {
+                                    buildList {
+                                        if (!entry.tv.fetched) add(async {
+                                            MediaType.TV to repository.searchMedia(title, 1, MediaType.TV)
+                                        })
+                                        if (!entry.movies.fetched) add(async {
+                                            MediaType.MOVIE to repository.searchMedia(title, 1, MediaType.MOVIE)
+                                        })
+                                    }.awaitAll()
+                                }
+                                if (matches(request)) {
+                                    pending.forEach { (type, page) ->
+                                        when (type) {
+                                            MediaType.TV -> entry.tv.addPage(page, 1, page.tvHasMore)
+                                            MediaType.MOVIE -> entry.movies.addPage(page, 1, page.movieHasMore)
+                                        }
+                                        if (entry.suggestedTitle == null)
+                                            entry.suggestedTitle = page.suggestedTitle
+                                    }
+                                }
+                            }
+                        }
                     }
-                    enrichTv(page.items, request)
+                    if (matches(request)) {
+                        publish(request)
+                        enrichTv(visibleItems(entry, request.type), request)
+                    }
                 } catch (cancel: CancellationException) {
                     throw cancel
                 } catch (error: Exception) {
-                    _state.update {
-                        if (!matches(request, it)) it else it.copy(
-                            loading = false,
+                    if (matches(request)) {
+                        publish(request)
+                        _state.update { it.copy(
                             error = if (error.message?.contains("401") == true)
                                 "TMDB 令牌无效" else "搜索失败，请检查网络后重试"
-                        )
+                        ) }
                     }
                 }
             }
         }
     }
 
-    private fun matches(request: SearchRequest, state: SearchUiState) =
-        state.query == request.query && state.filter == request.type &&
-            queryFlow.value == request.query && filterFlow.value == request.type
-
     private suspend fun enrichTv(items: List<MediaSearchItem>, request: SearchRequest) {
+        val entry = cache[request.query] ?: return
         supervisorScope {
             val semaphore = Semaphore(3)
-            items.filter { it.type == MediaType.TV }.take(9).map { media ->
-                async {
-                    semaphore.withPermit {
-                        try {
-                            val details = repository.getDetails(media.id)
-                            if (currentCoroutineContext().isActive) {
-                                _state.update { current ->
-                                    if (!matches(request, current)) current else current.copy(
-                                        detailsById = current.detailsById + (media.id to details)
-                                    )
+            items.filter { it.type == MediaType.TV }
+                .distinctBy { it.id }
+                .take(9)
+                .filterNot { entry.tvDetails.containsKey(it.id) }
+                .map { media ->
+                    async {
+                        semaphore.withPermit {
+                            try {
+                                val details = repository.getDetails(media.id)
+                                if (currentCoroutineContext().isActive && matches(request)) {
+                                    entry.tvDetails[media.id] = details
+                                    _state.update { it.copy(
+                                        detailsById = entry.tvDetails.toMap()
+                                    ) }
                                 }
-                            }
-                        } catch (cancel: CancellationException) { throw cancel }
-                        catch (_: Exception) { /* Search remains usable without details. */ }
+                            } catch (cancel: CancellationException) { throw cancel }
+                            catch (_: Exception) { /* Metadata must never block search. */ }
+                        }
                     }
-                }
-            }.awaitAll()
+                }.awaitAll()
         }
     }
 
     fun setQuery(query: String) {
         if (queryFlow.value == query) return
         moreJob?.cancel()
-        _state.update { it.copy(query = query, items = emptyList(),
-            loading = query.isNotBlank(), loadingMore = false,
-            suggestedTitle = null, nextPage = null, error = null) }
         queryFlow.value = query
+        val request = SearchRequest(query, filterFlow.value)
+        // Render previous cached results immediately if this query was searched;
+        // no stale posters from a different keyword are displayed.
+        if (cache.containsKey(query)) publish(request, needsFetch(cached(query), request.type))
+        else _state.update { it.copy(
+            query = query, items = emptyList(), detailsById = emptyMap(),
+            nextPage = null, suggestedTitle = null, error = null,
+            loading = query.isNotBlank(), loadingMore = false
+        ) }
     }
 
     fun setFilter(type: MediaType?) {
         if (filterFlow.value == type) return
         moreJob?.cancel()
-        _state.update { it.copy(filter = type, items = emptyList(),
-            loading = it.query.isNotBlank(), loadingMore = false,
-            suggestedTitle = null, nextPage = null, error = null) }
         filterFlow.value = type
+        val request = SearchRequest(queryFlow.value, type)
+        // Instant in-memory tab switch: no Retrofit call, no loading flash if
+        // the selected endpoint was already fetched from All.
+        val data = cache[request.query]
+        publish(request, loading = request.query.isNotBlank() &&
+            (data == null || needsFetch(data, type)))
     }
 
     fun loadMore() {
-        val snapshot = _state.value
-        val page = snapshot.nextPage ?: return
-        val request = SearchRequest(snapshot.query, snapshot.filter)
-        if (snapshot.loadingMore || snapshot.loading || !matches(request, snapshot)) return
+        val current = _state.value
+        val request = SearchRequest(current.query, current.filter)
+        if (current.loading || current.loadingMore || !matches(request)) return
+        val data = cache[request.query] ?: return
+        val wanted = when (request.type) {
+            MediaType.TV -> listOf(MediaType.TV)
+            MediaType.MOVIE -> listOf(MediaType.MOVIE)
+            null -> listOf(MediaType.TV, MediaType.MOVIE)
+        }.mapNotNull { type ->
+            val bucket = if (type == MediaType.TV) data.tv else data.movies
+            bucket.nextPage?.takeIf { bucket.fetched }?.let { type to it }
+        }
+        if (wanted.isEmpty()) return
         _state.update { it.copy(loadingMore = true, error = null) }
         moreJob?.cancel()
         moreJob = viewModelScope.launch {
             try {
-                val next = repository.searchMedia(
-                    TitleNormalizer.parse(request.query).name, page, request.type)
-                _state.update { current ->
-                    if (!matches(request, current)) current else {
-                        val merged = (current.items + next.items)
-                            .distinctBy { it.type to it.id }
-                        current.copy(items = merged, loadingMore = false,
-                            nextPage = if (next.hasMore) page + 1 else null)
-                    }
+                val title = TitleNormalizer.parse(request.query).name
+                val incoming = coroutineScope {
+                    wanted.map { (type, page) ->
+                        async { Triple(type, page, repository.searchMedia(title, page, type)) }
+                    }.awaitAll()
                 }
-                if (matches(request, _state.value)) enrichTv(next.items, request)
+                if (!matches(request)) return@launch
+                incoming.forEach { (type, pageNumber, result) ->
+                    val bucket = if (type == MediaType.TV) data.tv else data.movies
+                    bucket.addPage(result, pageNumber,
+                        if (type == MediaType.TV) result.tvHasMore else result.movieHasMore)
+                }
+                publish(request)
+                enrichTv(visibleItems(data, request.type), request)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) {
-                _state.update {
-                    if (!matches(request, it)) it else it.copy(
-                        loadingMore = false, error = "加载更多失败，请重试"
-                    )
+                if (matches(request)) {
+                    publish(request)
+                    _state.update { it.copy(error = "加载更多失败，请重试") }
                 }
             }
         }

@@ -212,15 +212,17 @@ class TmdbRepository(token: String) : MediaRepository {
             MediaType.TV -> {
                 val tv = api.searchShows(query, page = page)
                 MediaSearchPage(
-                    tv.results.filter { it.id > 0 }.map { it.asSearchItem() },
-                    page < tv.totalPages
+                    items = tv.results.filter { it.id > 0 }.map { it.asSearchItem() },
+                    hasMore = page < tv.totalPages,
+                    tvHasMore = page < tv.totalPages
                 )
             }
             MediaType.MOVIE -> {
                 val movies = api.searchMovies(query, page = page)
                 MediaSearchPage(
-                    movies.results.filter { it.id > 0 }.map { it.asSearchItem() },
-                    page < movies.totalPages
+                    items = movies.results.filter { it.id > 0 }.map { it.asSearchItem() },
+                    hasMore = page < movies.totalPages,
+                    movieHasMore = page < movies.totalPages
                 )
             }
             null -> {
@@ -238,7 +240,12 @@ class TmdbRepository(token: String) : MediaRepository {
                         movieItems.getOrNull(index)?.let(::add)
                     }
                 }.distinctBy { it.type to it.id }
-                MediaSearchPage(merged, page < tv.totalPages || page < movies.totalPages)
+                MediaSearchPage(
+                    items = merged,
+                    hasMore = page < tv.totalPages || page < movies.totalPages,
+                    tvHasMore = page < tv.totalPages,
+                    movieHasMore = page < movies.totalPages
+                )
             }
         }
     }

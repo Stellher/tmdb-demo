@@ -75,7 +75,11 @@ data class MediaSearchPage(
     val items: List<MediaSearchItem>,
     val hasMore: Boolean,
     /** Non-null when the first page contains a verified near-title fallback. */
-    val suggestedTitle: String? = null
+    val suggestedTitle: String? = null,
+    // Only populated for source-specific and the combined first-page search.
+    // Consumers must never infer a source's next page from the other one.
+    val tvHasMore: Boolean = false,
+    val movieHasMore: Boolean = false
 )
 
 data class MovieDetails(
