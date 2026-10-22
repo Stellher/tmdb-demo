@@ -105,6 +105,15 @@ fun SearchScreen(
                     Text("电影 · 电视剧 · 动画 · 全部季度", fontSize = 12.sp, color = SecondaryInk)
                 }
             }
+            if (state.suggestedTitle != null && !state.loading) {
+                item {
+                    Text(
+                        "未找到完全匹配，可能是：${state.suggestedTitle}（近似片名）",
+                        color = Color(0xFF4C69D9), fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                    )
+                }
+            }
             if (state.loading && state.items.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {

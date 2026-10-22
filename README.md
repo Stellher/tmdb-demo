@@ -4,6 +4,7 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 
 ## Features
 
+- Search includes low-noise fallback for near-title typos (e.g. 兰花如故 → 兰香如故). A blue inline hint distinguishes a fallback from an exact result. Original exact results and their pagination remain unchanged.
 - Search **both movies and TV series** using parallel TMDB API queries, with debounced input, mixed 3-column results, type chips and next-page pagination
 - Strip season suffixes (e.g. 第二季/S02) from search keywords, carry the desired season into detail navigation, and expand TMDB series into season-specific cards where season data is available
 - 3-column poster results implemented using **LazyColumn** rows, with year, type, country and progressively enriched latest episode / total episode count

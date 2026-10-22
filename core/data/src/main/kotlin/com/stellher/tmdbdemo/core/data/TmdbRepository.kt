@@ -5,6 +5,7 @@ import com.stellher.tmdbdemo.core.model.MediaRepository
 import com.stellher.tmdbdemo.core.model.MediaSearchItem
 import com.stellher.tmdbdemo.core.model.MediaSearchPage
 import com.stellher.tmdbdemo.core.model.MediaType
+import com.stellher.tmdbdemo.core.model.TitleMatcher
 import com.stellher.tmdbdemo.core.model.MovieDetails
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -200,11 +201,9 @@ class TmdbRepository(token: String) : MediaRepository {
      * one category in its first page, and includes people we don't want.
      * Interleaving gives both media types visible positions on the first screen.
      */
-    override suspend fun searchMedia(query: String, page: Int): MediaSearchPage = coroutineScope {
-        if (query.isBlank()) return@coroutineScope MediaSearchPage(emptyList(), false)
-        val cleaned = query.trim()
-        val tvRequest = async { api.searchShows(cleaned, page = page) }
-        val movieRequest = async { api.searchMovies(cleaned, page = page) }
+    private suspend fun exactSearch(query: String, page: Int): MediaSearchPage = coroutineScope {
+        val tvRequest = async { api.searchShows(query, page = page) }
+        val movieRequest = async { api.searchMovies(query, page = page) }
         val tv = tvRequest.await()
         val movies = movieRequest.await()
         val tvItems = tv.results.filter { it.id > 0 }.map { it.asSearchItem() }
@@ -216,6 +215,46 @@ class TmdbRepository(token: String) : MediaRepository {
             }
         }.distinctBy { it.type to it.id }
         MediaSearchPage(merged, page < tv.totalPages || page < movies.totalPages)
+    }
+
+    override suspend fun searchMedia(query: String, page: Int): MediaSearchPage {
+        if (query.isBlank()) return MediaSearchPage(emptyList(), false)
+        val cleaned = query.trim()
+        val primary = exactSearch(cleaned, page)
+        // Never turn every page into a fuzzy search. Preserve exact results,
+        // first-page ordering and API pagination whenever a relevant match exists.
+        if (page > 1 || primary.items.any {
+                TitleMatcher.isClose(cleaned, it.title) ||
+                    TitleMatcher.isClose(cleaned, it.originalTitle)
+            } || TitleMatcher.normalize(cleaned).length < 3
+        ) return primary
+
+        val discovered = mutableListOf<MediaSearchItem>()
+        for (term in TitleMatcher.fallbackQueries(cleaned)) {
+            // Network failures on a fallback must not hide valid primary results.
+            val found = try { exactSearch(term, 1).items } catch (_: Exception) { emptyList() }
+            discovered += found.filter { item ->
+                TitleMatcher.isClose(cleaned, item.title) ||
+                    TitleMatcher.isClose(cleaned, item.originalTitle)
+            }
+            if (discovered.any { TitleMatcher.score(cleaned, it.title) >= 0.75 }) break
+        }
+
+        val results = discovered.distinctBy { it.type to it.id }
+            .sortedByDescending { maxOf(
+                TitleMatcher.score(cleaned, it.title),
+                TitleMatcher.score(cleaned, it.originalTitle)
+            ) }
+        if (results.isEmpty()) return primary
+        // Keep the fuzzy results recognizable instead of returning every broad
+        // substring match such as other titles containing "如故".
+        return MediaSearchPage(
+            items = results,
+            hasMore = false,
+            suggestedTitle = results.first().title.takeIf {
+                TitleMatcher.normalize(it) != TitleMatcher.normalize(cleaned)
+            }
+        )
     }
 
     override suspend fun getMovieDetails(id: Int): MovieDetails {

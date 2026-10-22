@@ -34,6 +34,7 @@ data class SearchUiState(
     val items: List<MediaSearchItem> = emptyList(),
     val detailsById: Map<Int, TvDetails> = emptyMap(),
     val requestedSeason: Int? = null,
+    val suggestedTitle: String? = null,
     val filter: MediaFilter = MediaFilter.ALL,
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
@@ -52,7 +53,8 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
             queryFlow.debounce(420).distinctUntilChanged().collectLatest { query ->
                 _state.update {
                     it.copy(query = query, loading = true, loadingMore = false, items = emptyList(),
-                        detailsById = emptyMap(), requestedSeason = null, nextPage = null, error = null)
+                        detailsById = emptyMap(), requestedSeason = null, suggestedTitle = null,
+                        nextPage = null, error = null)
                 }
                 if (query.isBlank()) {
                     _state.update { it.copy(loading = false) }
@@ -64,6 +66,7 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
                     _state.update {
                         if (it.query != query) it else it.copy(
                             items = page.items, requestedSeason = intent.requestedSeason,
+                            suggestedTitle = page.suggestedTitle,
                             nextPage = if (page.hasMore) 2 else null,
                             loading = false)
                     }
