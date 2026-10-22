@@ -201,28 +201,53 @@ class TmdbRepository(token: String) : MediaRepository {
      * one category in its first page, and includes people we don't want.
      * Interleaving gives both media types visible positions on the first screen.
      */
-    private suspend fun exactSearch(query: String, page: Int): MediaSearchPage = coroutineScope {
-        val tvRequest = async { api.searchShows(query, page = page) }
-        val movieRequest = async { api.searchMovies(query, page = page) }
-        val tv = tvRequest.await()
-        val movies = movieRequest.await()
-        val tvItems = tv.results.filter { it.id > 0 }.map { it.asSearchItem() }
-        val movieItems = movies.results.filter { it.id > 0 }.map { it.asSearchItem() }
-        val merged = buildList {
-            for (index in 0 until maxOf(tvItems.size, movieItems.size)) {
-                tvItems.getOrNull(index)?.let(::add)
-                movieItems.getOrNull(index)?.let(::add)
+    // null = both endpoints; TV/MOVIE query only their own TMDB search endpoint.
+    // Each mode owns its pagination. genre_ids does not affect category selection.
+    private suspend fun exactSearch(
+        query: String,
+        page: Int,
+        type: MediaType?
+    ): MediaSearchPage = coroutineScope {
+        when (type) {
+            MediaType.TV -> {
+                val tv = api.searchShows(query, page = page)
+                MediaSearchPage(
+                    tv.results.filter { it.id > 0 }.map { it.asSearchItem() },
+                    page < tv.totalPages
+                )
             }
-        }.distinctBy { it.type to it.id }
-        MediaSearchPage(merged, page < tv.totalPages || page < movies.totalPages)
+            MediaType.MOVIE -> {
+                val movies = api.searchMovies(query, page = page)
+                MediaSearchPage(
+                    movies.results.filter { it.id > 0 }.map { it.asSearchItem() },
+                    page < movies.totalPages
+                )
+            }
+            null -> {
+                // All: cover both TV and movie results. /search/multi can have
+                // unbalanced ranking and people, so combine the dedicated endpoints.
+                val tvRequest = async { api.searchShows(query, page = page) }
+                val movieRequest = async { api.searchMovies(query, page = page) }
+                val tv = tvRequest.await()
+                val movies = movieRequest.await()
+                val tvItems = tv.results.filter { it.id > 0 }.map { it.asSearchItem() }
+                val movieItems = movies.results.filter { it.id > 0 }.map { it.asSearchItem() }
+                val merged = buildList {
+                    for (index in 0 until maxOf(tvItems.size, movieItems.size)) {
+                        tvItems.getOrNull(index)?.let(::add)
+                        movieItems.getOrNull(index)?.let(::add)
+                    }
+                }.distinctBy { it.type to it.id }
+                MediaSearchPage(merged, page < tv.totalPages || page < movies.totalPages)
+            }
+        }
     }
 
-    override suspend fun searchMedia(query: String, page: Int): MediaSearchPage {
+    override suspend fun searchMedia(query: String, page: Int, type: MediaType?): MediaSearchPage {
         if (query.isBlank()) return MediaSearchPage(emptyList(), false)
         val cleaned = query.trim()
-        val primary = exactSearch(cleaned, page)
-        // Never turn every page into a fuzzy search. Preserve exact results,
-        // first-page ordering and API pagination whenever a relevant match exists.
+        val primary = exactSearch(cleaned, page, type)
+        // Fuzzy fallback stays inside the selected endpoint, never mixes categories.
         if (page > 1 || primary.items.any {
                 TitleMatcher.isClose(cleaned, it.title) ||
                     TitleMatcher.isClose(cleaned, it.originalTitle)
@@ -231,23 +256,19 @@ class TmdbRepository(token: String) : MediaRepository {
 
         val discovered = mutableListOf<MediaSearchItem>()
         for (term in TitleMatcher.fallbackQueries(cleaned)) {
-            // Network failures on a fallback must not hide valid primary results.
-            val found = try { exactSearch(term, 1).items } catch (_: Exception) { emptyList() }
+            val found = try { exactSearch(term, 1, type).items } catch (_: Exception) { emptyList() }
             discovered += found.filter { item ->
                 TitleMatcher.isClose(cleaned, item.title) ||
                     TitleMatcher.isClose(cleaned, item.originalTitle)
             }
             if (discovered.any { TitleMatcher.score(cleaned, it.title) >= 0.75 }) break
         }
-
         val results = discovered.distinctBy { it.type to it.id }
-            .sortedByDescending { maxOf(
-                TitleMatcher.score(cleaned, it.title),
-                TitleMatcher.score(cleaned, it.originalTitle)
-            ) }
+            .sortedByDescending {
+                maxOf(TitleMatcher.score(cleaned, it.title),
+                      TitleMatcher.score(cleaned, it.originalTitle))
+            }
         if (results.isEmpty()) return primary
-        // Keep the fuzzy results recognizable instead of returning every broad
-        // substring match such as other titles containing "如故".
         return MediaSearchPage(
             items = results,
             hasMore = false,

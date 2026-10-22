@@ -5,7 +5,7 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 ## Features
 
 - Search includes low-noise fallback for near-title typos (e.g. 兰花如故 → 兰香如故). A blue inline hint distinguishes a fallback from an exact result. Original exact results and their pagination remain unchanged.
-- Search **both movies and TV series** using parallel TMDB API queries, with debounced input, mixed 3-column results, type chips and next-page pagination
+- Exactly three search tabs, matching TMDB endpoint types: **全部** queries /search/tv and /search/movie in parallel, **TV** queries only /search/tv, and **电影** queries only /search/movie. Switching tabs sends a new search and uses independent pagination. Animation genre 16 is never used for search category filtering.
 - Strip season suffixes (e.g. 第二季/S02) from search keywords, carry the desired season into detail navigation, and expand TMDB series into season-specific cards where season data is available
 - 3-column poster results implemented using **LazyColumn** rows, with year, type, country and progressively enriched latest episode / total episode count
 - Dedicated movie detail screen with poster, synopsis, release date, rating, runtime and genres
@@ -53,7 +53,10 @@ The Gradle 8.13 wrapper files are included (official Gradle 8.13.0 scripts and b
 ## API use
 
 ```text
+# 全部: both requests, merged on the client
+# TV: one /search/tv request
 GET /3/search/tv?query=...&page=1
+# 电影: one /search/movie request
 GET /3/search/movie?query=...&page=1
 GET /3/movie/{id}?language=zh-CN
 GET /3/tv/{id}?language=zh-CN

@@ -44,7 +44,7 @@ data class TvDetails(
 )
 
 interface MediaRepository {
-    suspend fun searchMedia(query: String, page: Int = 1): MediaSearchPage
+    suspend fun searchMedia(query: String, page: Int = 1, type: MediaType? = null): MediaSearchPage
     suspend fun getMovieDetails(id: Int): MovieDetails
     suspend fun searchShows(query: String): List<TvShow>
     suspend fun getDetails(id: Int): TvDetails
