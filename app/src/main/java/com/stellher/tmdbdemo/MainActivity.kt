@@ -16,7 +16,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.stellher.tmdbdemo.core.data.TmdbRepository
 import com.stellher.tmdbdemo.core.ui.TmdbTheme
+import com.stellher.tmdbdemo.core.model.MediaType
 import com.stellher.tmdbdemo.feature.detail.DetailScreen
+import com.stellher.tmdbdemo.feature.detail.MovieDetailScreen
 import com.stellher.tmdbdemo.feature.search.SearchScreen
 
 class MainActivity : ComponentActivity() {
@@ -30,9 +32,20 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                     NavHost(navController = nav, startDestination = "search") {
                         composable("search") {
-                            SearchScreen(repository = repository, onSelected = { id, season ->
-                                nav.navigate("details/" + id + "?season=" + (season ?: -1))
+                            SearchScreen(repository = repository, onSelected = { type, id, season ->
+                                when (type) {
+                                    MediaType.TV -> nav.navigate("details/" + id + "?season=" + (season ?: -1))
+                                    MediaType.MOVIE -> nav.navigate("movie/" + id)
+                                }
                             })
+                        }
+                        composable(
+                            route = "movie/{id}",
+                            arguments = listOf(navArgument("id") { type = NavType.IntType })
+                        ) { entry ->
+                            val id = entry.arguments?.getInt("id") ?: return@composable
+                            MovieDetailScreen(movieId = id, repository = repository,
+                                onBack = { nav.popBackStack() })
                         }
                         composable(
                             route = "details/{id}?season={season}",

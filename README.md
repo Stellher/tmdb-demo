@@ -4,9 +4,10 @@ A real Android Studio multi-module Kotlin/Compose demo inspired by three provide
 
 ## Features
 
-- Search TV series in Chinese via TMDB API v3, debounced text entry
+- Search **both movies and TV series** using parallel TMDB API queries, with debounced input, mixed 3-column results, type chips and next-page pagination
 - Strip season suffixes (e.g. 第二季/S02) from search keywords, carry the desired season into detail navigation, and expand TMDB series into season-specific cards where season data is available
 - 3-column poster results implemented using **LazyColumn** rows, with year, type, country and progressively enriched latest episode / total episode count
+- Dedicated movie detail screen with poster, synopsis, release date, rating, runtime and genres
 - Full TV detail metadata + season navigation, including special episodes (season 0)
 - Horizontal, landscape-still episode cards with title, air date, and runtime
 - Expandable **ModalBottomSheet** showing episode stills and synopsis; tap any episode for the full description dialog
@@ -46,7 +47,9 @@ The Gradle 8.13 wrapper files are included (official Gradle 8.13.0 scripts and b
 ## API use
 
 ```text
-GET /3/search/tv?query=...
+GET /3/search/tv?query=...&page=1
+GET /3/search/movie?query=...&page=1
+GET /3/movie/{id}?language=zh-CN
 GET /3/tv/{id}?language=zh-CN
 GET /3/tv/{id}/season/{season_number}?language=zh-CN
 ```
