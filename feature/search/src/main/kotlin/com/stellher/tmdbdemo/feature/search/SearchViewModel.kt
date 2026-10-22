@@ -6,11 +6,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.stellher.tmdbdemo.core.model.MediaRepository
-import com.stellher.tmdbdemo.core.model.TvShow
-import com.stellher.tmdbdemo.core.model.TvDetails
+import com.stellher.tmdbdemo.core.model.MediaSearchItem
+import com.stellher.tmdbdemo.core.model.MediaType
 import com.stellher.tmdbdemo.core.model.TitleNormalizer
+import com.stellher.tmdbdemo.core.model.TvDetails
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
@@ -27,14 +27,18 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
+enum class MediaFilter { ALL, TV, MOVIE, ANIMATION }
+
 data class SearchUiState(
     val query: String = "辉夜",
-    val shows: List<TvShow> = emptyList(),
+    val items: List<MediaSearchItem> = emptyList(),
     val detailsById: Map<Int, TvDetails> = emptyMap(),
     val requestedSeason: Int? = null,
+    val filter: MediaFilter = MediaFilter.ALL,
     val loading: Boolean = true,
-    val error: String? = null,
-    val animeOnly: Boolean = false
+    val loadingMore: Boolean = false,
+    val nextPage: Int? = null,
+    val error: String? = null
 )
 
 @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -46,50 +50,92 @@ class SearchViewModel(private val repository: MediaRepository) : ViewModel() {
     init {
         viewModelScope.launch {
             queryFlow.debounce(420).distinctUntilChanged().collectLatest { query ->
-                _state.update { it.copy(query = query, loading = true, error = null, shows = emptyList(), detailsById = emptyMap(), requestedSeason = null) }
+                _state.update {
+                    it.copy(query = query, loading = true, loadingMore = false, items = emptyList(),
+                        detailsById = emptyMap(), requestedSeason = null, nextPage = null, error = null)
+                }
                 if (query.isBlank()) {
-                    _state.update { it.copy(shows = emptyList(), loading = false) }
+                    _state.update { it.copy(loading = false) }
                     return@collectLatest
                 }
                 try {
                     val intent = TitleNormalizer.parse(query)
-                    val shows = repository.searchShows(intent.name)
-                    _state.update { it.copy(shows = shows, detailsById = emptyMap(), requestedSeason = intent.requestedSeason, loading = false) }
-                    // Enrich only the first nine cards; cap concurrent detail requests at three.
-                    supervisorScope {
-                        val semaphore = Semaphore(3)
-                        shows.take(9).map { item ->
-                            async {
-                                semaphore.withPermit {
-                                    try {
-                                        val details = repository.getDetails(item.id)
-                                        if (currentCoroutineContext().isActive) {
-                                            _state.update { old ->
-                                                if (old.query != query) old else old.copy(
-                                                    detailsById = old.detailsById + (item.id to details)
-                                                )
-                                            }
-                                        }
-                                    } catch (cancel: CancellationException) { throw cancel }
-                                    catch (_: Exception) { /* Search remains usable if enrichment fails. */ }
-                                }
-                            }
-                        }.awaitAll()
-                    }
-                } catch (cancel: CancellationException) { throw cancel }
-                catch (e: Exception) {
+                    val page = repository.searchMedia(intent.name, 1)
                     _state.update {
-                        it.copy(loading = false, shows = emptyList(), detailsById = emptyMap(),
-                            error = if (e.message?.contains("401") == true) "TMDB 访问令牌无效或缺失"
-                            else "搜索失败，请检查网络或稍后重试")
+                        if (it.query != query) it else it.copy(
+                            items = page.items, requestedSeason = intent.requestedSeason,
+                            nextPage = if (page.hasMore) 2 else null,
+                            loading = false)
+                    }
+                    enrichTv(page.items, query)
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    _state.update {
+                        if (it.query != query) it else it.copy(
+                            loading = false, error = if (error.message?.contains("401") == true)
+                                "TMDB 令牌无效" else "搜索失败，请检查网络后重试")
                     }
                 }
             }
         }
     }
 
-    fun setQuery(value: String) { _state.update { it.copy(query = value) }; queryFlow.value = value }
-    fun toggleAnimeOnly() { _state.update { it.copy(animeOnly = !it.animeOnly) } }
+    private suspend fun enrichTv(items: List<MediaSearchItem>, query: String) {
+        supervisorScope {
+            val semaphore = Semaphore(3)
+            items.filter { it.type == MediaType.TV }.take(9).map { media ->
+                async {
+                    semaphore.withPermit {
+                        try {
+                            val details = repository.getDetails(media.id)
+                            if (currentCoroutineContext().isActive) {
+                                _state.update { current ->
+                                    if (current.query != query) current else current.copy(
+                                        detailsById = current.detailsById + (media.id to details))
+                                }
+                            }
+                        } catch (cancel: CancellationException) {
+                            throw cancel
+                        } catch (_: Exception) { /* Keep search results without enrichment. */ }
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    fun setQuery(query: String) {
+        _state.update { it.copy(query = query) }
+        queryFlow.value = query
+    }
+
+    fun setFilter(filter: MediaFilter) { _state.update { it.copy(filter = filter) } }
+
+    fun loadMore() {
+        val snapshot = _state.value
+        val page = snapshot.nextPage ?: return
+        if (snapshot.loadingMore || snapshot.loading || snapshot.query != queryFlow.value) return
+        _state.update { it.copy(loadingMore = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val next = repository.searchMedia(TitleNormalizer.parse(snapshot.query).name, page)
+                _state.update { current ->
+                    if (current.query != snapshot.query) current else {
+                        val merged = (current.items + next.items).distinctBy { it.type to it.id }
+                        current.copy(items = merged, loadingMore = false,
+                            nextPage = if (next.hasMore) page + 1 else null)
+                    }
+                }
+                if (_state.value.query == snapshot.query) enrichTv(next.items, snapshot.query)
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) {
+                _state.update {
+                    if (it.query != snapshot.query) it
+                    else it.copy(loadingMore = false, error = "加载更多失败，请重试")
+                }
+            }
+        }
+    }
 
     companion object {
         fun factory(repository: MediaRepository): ViewModelProvider.Factory = viewModelFactory {
