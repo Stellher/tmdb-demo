@@ -46,7 +46,7 @@ object TitleMatcher {
         val distance = levenshtein(a, b)
         return a == b || (a.length >= 2 && b.contains(a)) ||
             (minOf(a.length, b.length) >= 4 &&
-                distance <= if (maxOf(a.length, b.length) >= 8) 2 else 1 &&
+                distance <= (if (maxOf(a.length, b.length) >= 8) 2 else 1) &&
                 score(a, b) >= 0.74)
     }
 
