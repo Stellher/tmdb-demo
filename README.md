@@ -67,3 +67,10 @@ GET /3/tv/{id}/season/{season_number}?language=zh-CN
 TMDB only provides metadata, not playable streaming sources. The newest *aired* episode in series details may belong to a different season from the one currently selected, and episode poster/still coverage varies by TV series. A missing still displays the neutral image placeholder.
 
 Data and images by TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+
+## Go anime metadata service — automatic anime cour/episode mapping
+
+A separate, database-free Gin metadata service is available under [anime-metadata-go](anime-metadata-go/). It requires **no MySQL/Redis/SQLite and no user-managed correction table**: downloads AniBridge+Fribb snapshots into process memory, queries AniList and TMDB, and returns corrected per-cour episode stills.
+
+Example endpoints: `GET /api/anime/search?q=Re%3AZero`, `GET /api/anime/108632` (ReZero S2 Part 1), `GET /api/anime/tmdb/65942` (whole ReZero series with independent entries), and `GET /api/anime/tmdb/65931` (Bungo Stray Dogs). See [actual CI request results](anime-metadata-go/VALIDATION.md). The Android app has not been switched to this API; existing TMDB Compose screens keep working unchanged.

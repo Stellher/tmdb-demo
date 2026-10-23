@@ -36,3 +36,15 @@ func TestFribbIndexes(t *testing.T){
     b,_:=json.Marshal(entries[108632])
     if entries[108632].TMDB.TV!=65942||entries[108632].Offset.TMDB!=26 {t.Fatal(string(b))}
 }
+
+func TestRejectTripleConflict(t *testing.T) {
+    segments:=[]Segment{
+        {AniListID:1,TMDBID:3,TMDBSeason:1,TMDBRange:Range{1,1},AniListRange:Range{1,1}},
+        {AniListID:1,TMDBID:3,TMDBSeason:2,TMDBRange:Range{1,1},AniListRange:Range{1,1}},
+        {AniListID:1,TMDBID:3,TMDBSeason:3,TMDBRange:Range{1,1},AniListRange:Range{1,1}},
+    }
+    seasons:=map[int]TmdbSeason{}
+    for i:=1;i<=3;i++ {seasons[i]=TmdbSeason{Episodes:[]TmdbEpisode{{EpisodeNumber:1,StillPath:"/x.jpg"}}}}
+    result,warnings:=applyRanges(segments,seasons,nil,true)
+    if len(result)!=0||len(warnings)==0{t.Fatalf("should exclude 3-way ambiguous correspondence; got %v %v",result,warnings)}
+}

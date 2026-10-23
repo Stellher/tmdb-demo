@@ -26,10 +26,6 @@ jobs:
           go test -v ./...
           go vet ./...
           go build -o anime-metadata-go .
-          echo "GOSUM_BEGIN"
-          base64 -w0 go.sum
-          echo
-          echo "GOSUM_END"
       - name: Reuse disposable TMDB demo test token
         shell: bash
         run: |
@@ -100,6 +96,37 @@ jobs:
               except Exception as error:
                   print("REQUEST_FAILED",route,str(error)[:400],flush=True)
                   # Initial exploratory pass: do not stop subsequent route tests.
+          PY
+      - name: Assert exact ReZero and Bungo main-season episode mapping
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,urllib.request
+          base="http://127.0.0.1:8080/api/anime/tmdb/"
+          expectations={
+              65942:{21355:(25,1),108632:(13,26),119661:(12,39),163134:(16,51),189046:(19,67)},
+              65931:{21311:(12,1),21679:(12,13),103223:(12,25),141249:(13,37),163263:(11,50)},
+          }
+          for tmdb,requirements in expectations.items():
+              with urllib.request.urlopen(base+str(tmdb),timeout=110) as response:
+                  data=json.load(response)
+              entries={e["anilistId"]:e for e in data["entries"]}
+              for aid,(count,start) in requirements.items():
+                  assert aid in entries,(tmdb,aid,"missing title")
+                  entry=entries[aid]
+                  assert entry["count"]==count,(tmdb,aid,"episode mismatch",entry["count"])
+                  assert entry["stills"]==count,(tmdb,aid,"missing episode images")
+                  assert entry["episodes"][0]["tmdbEpisodeNumber"]==start,(tmdb,aid,"wrong TMDB episode offset")
+                  assert entry["verifiedCount"],(tmdb,aid,"AniList count does not match")
+              first_five=[e["anilistId"] for e in data["entries"] if e["format"]=="TV"][:5]
+              assert first_five==list(requirements),(tmdb,"wrong chronological season order",first_five)
+              print("VERIFIED",{"tmdbId":tmdb,"mainSeasons":first_five,
+                  "mainEpisodes":sum(v[0] for v in requirements.values()),"allStillsPresent":True})
+          with urllib.request.urlopen(base+"65931",timeout=110) as response:
+              bungo=json.load(response)
+          ova=next(e for e in bungo["entries"] if e["anilistId"]==21791)
+          assert ova["count"]==1 and ova["episodes"][0]["tmdbSeason"]==0
+          print("VERIFIED special",{"id":21791,"season":0,"episode":1})
           PY
       - name: Dump startup errors
         if: always()
