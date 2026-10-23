@@ -1,0 +1,105 @@
+name: Go anime metadata tests and live ReZero/BSD
+on:
+  push:
+    branches: [feature/go-anime-metadata, main]
+    paths:
+      - 'anime-metadata-go/**'
+      - '.github/workflows/go-anime-metadata.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  go-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: anime-metadata-go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: anime-metadata-go/go.mod
+      - name: Download Go dependencies and test
+        run: |
+          go mod tidy
+          go test -v ./...
+          go vet ./...
+          go build -o anime-metadata-go .
+      - name: Reuse disposable TMDB demo test token
+        shell: bash
+        run: |
+          TOKEN="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+          data=Path('../app/build.gradle.kts').read_text()
+          match=re.search(r'val tmdbReadToken\s*=\s*"([^"]+)"',data)
+          if match: print(match.group(1))
+          PY
+          )"
+          if [[ -z "$TOKEN" ]]; then echo 'Missing demo TMDB test token'; exit 1; fi
+          echo "::add-mask::$TOKEN"
+          echo "TMDB_READ_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+      - name: Start zero-database API
+        shell: bash
+        run: |
+          ./anime-metadata-go > /tmp/anime-metadata-server.log 2>&1 &
+          echo "$!" > /tmp/anime-metadata-server.pid
+          for i in $(seq 1 70); do
+            if curl -fsS http://127.0.0.1:8080/health > /tmp/health.json; then break; fi
+            sleep 3
+          done
+          echo "MAPPINGS:"
+          jq -c '{mappings,tmdbConfigured}' /tmp/health.json
+          jq -e '.mappings.loaded == true and .tmdbConfigured == true' /tmp/health.json
+      - name: Real AniList search and ReZero/Bungo episode requests
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.error
+          base="http://127.0.0.1:8080"
+          routes=[
+           "/api/anime/search?q=Re%3AZero",
+           "/api/anime/21355",
+           "/api/anime/108632",
+           "/api/anime/119661",
+           "/api/anime/163134",
+           "/api/anime/189046",
+           "/api/anime/tmdb/65942",
+           "/api/anime/tmdb/65931",
+          ]
+          for route in routes:
+              try:
+                  with urllib.request.urlopen(base+route,timeout=105) as response:
+                      data=json.load(response)
+                      if route.startswith("/api/anime/tmdb/"):
+                          entries=data.get("entries",[])
+                          print("SERIES_REPORT",json.dumps({"route":route,"http":response.status,
+                            "totalEntries":len(entries),"totalEpisodes":data.get("totalEpisodes"),
+                            "totalStills":data.get("totalStills"),
+                            "unresolved":data.get("unresolvedAniListIds"),
+                            "entries":[{"anilistId":e.get("anilistId"),"title":e.get("title"),
+                                        "count":e.get("count"),"stills":e.get("stills"),
+                                        "source":e.get("mappingSource"),
+                                        "verifiedCount":e.get("verifiedCount"),
+                                        "first":(e.get("episodes") or [{}])[0]} for e in entries]},ensure_ascii=False)[:10000],flush=True)
+                      elif route.startswith("/api/anime/search"):
+                          print("SEARCH_REPORT",json.dumps({"http":response.status,"count":data.get("count"),
+                            "first":data.get("results",[])[:5]},ensure_ascii=False)[:1600],flush=True)
+                      else:
+                          episodes=data.get("episodes",[])
+                          print("EPISODE_REPORT",json.dumps({"route":route,"http":response.status,
+                            "title":data.get("title"),"source":data.get("mappingSource"),
+                            "count":data.get("count"),"stills":data.get("stills"),
+                            "verifiedCount":data.get("verifiedCount"),"warnings":data.get("warnings"),
+                            "first":episodes[0] if episodes else None,"last":episodes[-1] if episodes else None},ensure_ascii=False)[:2700],flush=True)
+              except Exception as error:
+                  print("REQUEST_FAILED",route,str(error)[:400],flush=True)
+                  # Initial exploratory pass: do not stop subsequent route tests.
+          PY
+      - name: Dump startup errors
+        if: always()
+        shell: bash
+        run: |
+          tail -n 30 /tmp/anime-metadata-server.log || true
+          if [[ -f /tmp/anime-metadata-server.pid ]]; then kill "$(cat /tmp/anime-metadata-server.pid)" || true; fi
