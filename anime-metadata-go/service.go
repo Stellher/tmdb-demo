@@ -45,6 +45,7 @@ type SeriesResult struct {
     TotalEpisodes int `json:"totalEpisodes"`
     TotalStills int `json:"totalStills"`
     Unresolved []int `json:"unresolvedAniListIds,omitempty"`
+    UnresolvedReasons map[int]string `json:"unresolvedReasons,omitempty"`
     Notes []string `json:"notes"`
 }
 type Service struct{
@@ -220,7 +221,7 @@ func(s *Service) Series(ctx context.Context,tmdbID int)(SeriesResult,error){
     ids:=s.maps.AnimeIDs(tmdbID)
     if len(ids)==0{return SeriesResult{},fmt.Errorf("TMDB %d not found in loaded AniBridge/Fribb mapping",tmdbID)}
     if len(ids)>45 {ids=ids[:45]}
-    response:=SeriesResult{TMDBID:tmdbID,Entries:[]AnimeResult{},Notes:[]string{
+    response:=SeriesResult{TMDBID:tmdbID,Entries:[]AnimeResult{},UnresolvedReasons:map[int]string{},Notes:[]string{
         "Entries follow AniList anime titles/cours, not raw TMDB season numbers.",
         "Source mappings are maintained by upstream communities; no manual override database.",
     }}
@@ -240,7 +241,28 @@ func(s *Service) Series(ctx context.Context,tmdbID int)(SeriesResult,error){
     }
     wg.Wait();close(results)
     for r:=range results{
-        if r.err!=nil {response.Unresolved=append(response.Unresolved,r.id);continue}
+        if r.err!=nil {
+            // Transient AniList/TMDB network errors must not cause a successful
+            // series call to silently lose an entire season. Retry failed
+            // entries serially; the first pass has already warmed caches for
+            // successful entries. Mapping ambiguities remain unresolved.
+            if !strings.Contains(r.err.Error(),"no episode-exact mapping") &&
+                !strings.Contains(r.err.Error(),"not one; refusing a guess") {
+                for attempt:=0;attempt<2;attempt++ {
+                    pause:=time.Duration(attempt+1)*1500*time.Millisecond
+                    select{case <-time.After(pause):case <-ctx.Done():break}
+                    retry,e:=s.One(ctx,r.id,false)
+                    if e==nil {r.result=retry;r.err=nil;break}
+                    r.err=e
+                    if ctx.Err()!=nil {break}
+                }
+            }
+        }
+        if r.err!=nil {
+            response.Unresolved=append(response.Unresolved,r.id)
+            response.UnresolvedReasons[r.id]=r.err.Error()
+            continue
+        }
         response.Entries=append(response.Entries,r.result)
         if r.result.Format=="TV" {
             response.MainSeasonAniListIDs=append(response.MainSeasonAniListIDs,r.id)
