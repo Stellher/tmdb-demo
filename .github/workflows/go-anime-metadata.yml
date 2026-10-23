@@ -26,6 +26,10 @@ jobs:
           go test -v ./...
           go vet ./...
           go build -o anime-metadata-go .
+          echo "GOSUM_BEGIN"
+          base64 -w0 go.sum
+          echo
+          echo "GOSUM_END"
       - name: Reuse disposable TMDB demo test token
         shell: bash
         run: |
