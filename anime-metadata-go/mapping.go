@@ -187,6 +187,20 @@ func(s *MappingStore) Segments(aid int) []Segment{
         TMDBRange:Range{Start:from,End:int(^uint(0)>>1)},
         AniListRange:Range{Start:1,End:int(^uint(0)>>1)},Source:"fribb"}}
 }
+// Anchors returns exact AniBridge segments for the given TMDB show/season.
+// Used only for neighbor-based validation; Fribb cannot validate itself.
+func(s *MappingStore) Anchors(tmdbID,season int) []Segment {
+    s.mu.RLock();defer s.mu.RUnlock()
+    result:=make([]Segment,0)
+    for _,aid:=range s.snap.byTMDB[tmdbID] {
+        for _,segment:=range s.snap.byAnime[aid] {
+            if segment.TMDBID==tmdbID && segment.TMDBSeason==season {
+                result=append(result,segment)
+            }
+        }
+    }
+    return result
+}
 func(s *MappingStore) AnimeIDs(tmdbID int) []int {
     s.mu.RLock();defer s.mu.RUnlock()
     set:=map[int]bool{}
