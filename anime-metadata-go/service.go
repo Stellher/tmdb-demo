@@ -100,16 +100,21 @@ func applyRanges(mapping []Segment,seasonData map[int]TmdbSeason,
         if episodes[i].Season!=episodes[j].Season{return episodes[i].Season<episodes[j].Season}
         return episodes[i].TMDBEpisodeNumber<episodes[j].TMDBEpisodeNumber
     })
-    // Two different provider items referencing the same AniList number is a
-    // mapping conflict: do not silently choose the wrong episode/still.
+    // Reject all conflicting claims, including 3+ overlaps for the same
+    // number. Never silently choose the last of multiple incompatible stills.
+    frequency:=make(map[int]int)
+    for _,ep:=range episodes {frequency[ep.Number]++}
     filtered:=make([]Episode,0,len(episodes))
-    for _,v:=range episodes {
-        if len(filtered)>0&&filtered[len(filtered)-1].Number==v.Number {
-            warnings=append(warnings,fmt.Sprintf("conflicting mapping for AniList episode %d; excluded ambiguous artwork",v.Number))
-            filtered=filtered[:len(filtered)-1]
+    reported:=make(map[int]bool)
+    for _,ep:=range episodes {
+        if frequency[ep.Number]>1 {
+            if !reported[ep.Number] {
+                warnings=append(warnings,fmt.Sprintf("conflicting mapping for AniList episode %d; excluded ambiguous artwork",ep.Number))
+                reported[ep.Number]=true
+            }
             continue
         }
-        filtered=append(filtered,v)
+        filtered=append(filtered,ep)
     }
     return filtered,warnings
 }
@@ -246,8 +251,6 @@ func(s *Service) Series(ctx context.Context,tmdbID int)(SeriesResult,error){
         response.TotalStills+=r.result.Stills
     }
     sort.Ints(response.Unresolved)
-    sort.Ints(response.MainSeasonAniListIDs)
-    sort.Ints(response.ExtraAniListIDs)
     sort.Slice(response.Entries,func(i,j int)bool{
         a,b:=response.Entries[i].StartDate,response.Entries[j].StartDate
         if a.Year!=b.Year{return a.Year<b.Year}
@@ -255,6 +258,17 @@ func(s *Service) Series(ctx context.Context,tmdbID int)(SeriesResult,error){
         if a.Day!=b.Day{return a.Day<b.Day}
         return response.Entries[i].AniListID<response.Entries[j].AniListID
     })
+    // Expose primary seasons and extras in chronological order, matching
+    // entries[] (not AniList numeric ID order).
+    response.MainSeasonAniListIDs=response.MainSeasonAniListIDs[:0]
+    response.ExtraAniListIDs=response.ExtraAniListIDs[:0]
+    for _,entry:=range response.Entries {
+        if entry.Format=="TV" {
+            response.MainSeasonAniListIDs=append(response.MainSeasonAniListIDs,entry.AniListID)
+        }else{
+            response.ExtraAniListIDs=append(response.ExtraAniListIDs,entry.AniListID)
+        }
+    }
     if len(response.Entries)==0{return SeriesResult{},fmt.Errorf("no verified anime entries for TMDB %d; unresolved %v",tmdbID,response.Unresolved)}
     return response,nil
 }
