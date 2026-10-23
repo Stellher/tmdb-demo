@@ -1,29 +1,43 @@
-name: Probe AniCh search backend for ReZero
+name: Verify AniZip hosted metadata per anime season
 on:
   push:
     branches: [verification/aiometadata-live]
 permissions:
   contents: read
 jobs:
-  anich:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Check public AniCh /bangumi/search and episode endpoints
+      - name: Inspect publicly hosted season-aware episode metadata
+        shell: bash
         run: |
           python3 - <<'PY'
-          import urllib.request,urllib.error,urllib.parse
-          q=urllib.parse.quote("Re:从零开始的异世界生活",safe="")
-          for base in ["https://api.emmmm.eu.org","https://ani.emmmm.eu.org"]:
-              for path in ["/bangumi/search?keyword="+q+"&skip=0","/bangumi/search?keyword=Re%3AZero&skip=0"]:
-                  url=base+path
-                  request=urllib.request.Request(url,headers={"User-Agent":"xs Android 1.0.0","Accept":"application/octet-stream"})
-                  try:
-                      with urllib.request.urlopen(request,timeout=14) as response:
-                          raw=response.read(500000)
-                          print("SEARCH_STATUS",{"host":base,"query":path.split("keyword=")[1].split("&")[0],
-                              "status":response.status,"ctype":response.headers.get("content-type"),
-                              "bytes":len(raw),"first_bytes":raw[:28].hex()},flush=True)
-                  except urllib.error.HTTPError as ex:
-                      print("SEARCH_ERROR",{"host":base,"code":ex.code,"text":ex.read(160).decode(errors="replace")},flush=True)
-                  except Exception as ex:print("SEARCH_ERROR",base,str(ex)[:140],flush=True)
+          import json,urllib.request,urllib.error
+          cases=[
+           ("AniZip_ReZero_S1","https://api.ani.zip/episodes?anilist_id=21355"),
+           ("AniZip_ReZero_S2P1","https://api.ani.zip/episodes?anilist_id=108632"),
+           ("AniZip_ReZero_S2P2","https://api.ani.zip/episodes?anilist_id=119661"),
+           ("AniZip_ReZero_S3","https://api.ani.zip/episodes?anilist_id=163134"),
+           ("AniZip_ReZero_S4","https://api.ani.zip/episodes?anilist_id=189046"),
+           ("Hayase_AniZip_ReZero_S2P1","https://hayase.ani.zip/v1/episodes?anilist_id=108632"),
+           ("AnimeAPI_ReZero_S2P1","https://animeapi.my.id/anilist/108632"),
+           ("AniMap_ReZero_S2P1","https://animap.id/api/v1/map/anilist/108632")
+          ]
+          for name,url in cases:
+            req=urllib.request.Request(url,headers={"User-Agent":"Sparkle-Android-metadata-validation/1.0","Accept":"application/json"})
+            try:
+              with urllib.request.urlopen(req,timeout=18) as r:
+                body=r.read(1800000)
+                obj=json.loads(body)
+                eps=obj.get("episodes")
+                sample=eps if isinstance(eps,list) else list(eps.items()) if isinstance(eps,dict) else []
+                sample=sample[:3]
+                print("RESULT",json.dumps({"name":name,"status":r.status,"url":url,"keys":list(obj)[:25],
+                    "episodeType":type(eps).__name__,"episodeCount":len(eps) if eps else 0,
+                    "sample":sample,"mappings":obj.get("mappings"),"title":obj.get("title"),
+                    "images":len(obj.get("images") or [])},ensure_ascii=False)[:3400],flush=True)
+            except urllib.error.HTTPError as e:
+              print("RESULT",json.dumps({"name":name,"status":e.code,"body":e.read(180).decode(errors="replace")}),flush=True)
+            except Exception as e:
+              print("RESULT",json.dumps({"name":name,"error":str(e)[:220]}),flush=True)
           PY
