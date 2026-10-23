@@ -40,6 +40,8 @@ type AnimeResult struct {
 type SeriesResult struct {
     TMDBID int `json:"tmdbId"`
     Entries []AnimeResult `json:"entries"`
+    MainSeasonAniListIDs []int `json:"mainSeasonAniListIds"`
+    ExtraAniListIDs []int `json:"extraAniListIds"`
     TotalEpisodes int `json:"totalEpisodes"`
     TotalStills int `json:"totalStills"`
     Unresolved []int `json:"unresolvedAniListIds,omitempty"`
@@ -127,6 +129,47 @@ func(s *Service) One(ctx context.Context,aid int,includeUpcoming bool)(AnimeResu
     tmdbID:=segs[0].TMDBID
     seasons:=make(map[int]TmdbSeason)
     unique:=make(map[int]struct{})
+    // Fribb-only offsets sometimes overlap the final episode of the previous
+    // mapped cour. Shift only when BOTH neighboring AniBridge boundaries prove
+    // an unambiguous correction; do not keep a human-maintained fix table.
+    if len(segs)==1 && segs[0].Source=="fribb" &&
+        media.Format=="TV" && media.Episodes!=nil && *media.Episodes>0 {
+        from:=segs[0].TMDBRange.Start
+        anchors:=s.maps.Anchors(tmdbID,segs[0].TMDBSeason)
+        leftAligned,rightAligned:=false,false
+        for _,anchor:=range anchors {
+            if anchor.TMDBRange.End==from {leftAligned=true}
+            if anchor.TMDBRange.Start==from+*media.Episodes+1 {rightAligned=true}
+        }
+        if leftAligned && rightAligned {
+            segs[0].TMDBRange.Start=from+1
+            segs[0].TMDBRange.End=from+*media.Episodes
+            segs[0].AniListRange.End=*media.Episodes
+            segs[0].Source="fribb-validated-boundaries"
+        }
+    }
+    // Fribb fallback's season=1 for OVA/SPECIAL/MOVIE is often false.
+    // Resolve only a UNIQUE matching S0 air date for a single-episode
+    // special. A multi-episode OVA cannot safely be inferred from dates.
+    if len(segs)==1 && segs[0].Source=="fribb" &&
+        (media.Format=="OVA" || media.Format=="SPECIAL" || media.Format=="MOVIE") {
+        if media.Episodes==nil || *media.Episodes!=1 {
+            return AnimeResult{},fmt.Errorf("AniList %d special has no episode-exact mapping; refusing to reuse TMDB regular S1",aid)
+        }
+        special,e:=s.api.Season(ctx,tmdbID,0)
+        if e!=nil {return AnimeResult{},fmt.Errorf("TMDB specials unavailable: %w",e)}
+        date:=fmt.Sprintf("%04d-%02d-%02d",media.StartDate.Year,media.StartDate.Month,media.StartDate.Day)
+        var matches []TmdbEpisode
+        for _,ep:=range special.Episodes {
+            if ep.AirDate==date {matches=append(matches,ep)}
+        }
+        if len(matches)!=1 {
+            return AnimeResult{},fmt.Errorf("AniList %d special S0 date %s maps to %d episodes, not one; refusing a guess",aid,date,len(matches))
+        }
+        segs[0]=Segment{AniListID:aid,TMDBID:tmdbID,TMDBSeason:0,
+            TMDBRange:Range{Start:matches[0].EpisodeNumber,End:matches[0].EpisodeNumber},
+            AniListRange:Range{Start:1,End:1},Source:"special-exact-date"}
+    }
     for _,seg:=range segs {
         if seg.TMDBID!=tmdbID {
             warnings=append(warnings,"mapping spans multiple TMDB show IDs; only consistent show used")
@@ -194,10 +237,17 @@ func(s *Service) Series(ctx context.Context,tmdbID int)(SeriesResult,error){
     for r:=range results{
         if r.err!=nil {response.Unresolved=append(response.Unresolved,r.id);continue}
         response.Entries=append(response.Entries,r.result)
+        if r.result.Format=="TV" {
+            response.MainSeasonAniListIDs=append(response.MainSeasonAniListIDs,r.id)
+        } else {
+            response.ExtraAniListIDs=append(response.ExtraAniListIDs,r.id)
+        }
         response.TotalEpisodes+=r.result.Count
         response.TotalStills+=r.result.Stills
     }
     sort.Ints(response.Unresolved)
+    sort.Ints(response.MainSeasonAniListIDs)
+    sort.Ints(response.ExtraAniListIDs)
     sort.Slice(response.Entries,func(i,j int)bool{
         a,b:=response.Entries[i].StartDate,response.Entries[j].StartDate
         if a.Year!=b.Year{return a.Year<b.Year}
