@@ -72,41 +72,98 @@ type Providers struct {
     token string
     mu sync.RWMutex
     cache map[string]cachedPayload
+    aniListGate chan struct{}
 }
 func NewProviders(client *http.Client,token string)*Providers{
-    return &Providers{client:client,token:token,cache:make(map[string]cachedPayload)}
+    return &Providers{client:client,token:token,cache:make(map[string]cachedPayload),aniListGate:make(chan struct{},2)}
 }
 func (p *Providers) doJSON(ctx context.Context,method,endpoint string,input any,authorization bool,cacheFor time.Duration,result any)error{
-    var body io.Reader
-    if input!=nil {
+    var payload []byte
+    if input!=nil{
         data,e:=json.Marshal(input);if e!=nil{return e}
-        body=bytes.NewReader(data)
+        payload=data
     }
     key:=method+" "+endpoint
-    if cacheFor>0 {
-        p.mu.RLock();entry,ok:=p.cache[key];p.mu.RUnlock()
-        if ok&&entry.expires.After(time.Now()){return json.Unmarshal(entry.raw,result)}
+    // GraphQL shares a POST endpoint but different queries/IDs. They must not
+    // share a cache entry merely because the URL is the same.
+    if len(payload)>0{key+=" "+string(payload)}
+    lookup:=func()bool{
+        if cacheFor<=0{return false}
+        p.mu.RLock()
+        entry,ok:=p.cache[key]
+        p.mu.RUnlock()
+        if !ok||!entry.expires.After(time.Now()){return false}
+        return json.Unmarshal(entry.raw,result)==nil
     }
-    req,e:=http.NewRequestWithContext(ctx,method,endpoint,body);if e!=nil{return e}
-    req.Header.Set("User-Agent","Sparkle-Anime-Metadata/0.1")
-    req.Header.Set("Accept","application/json")
-    if input!=nil{req.Header.Set("Content-Type","application/json")}
-    if authorization{
-        if p.token==""{return errors.New("TMDB_READ_TOKEN not configured")}
-        req.Header.Set("Authorization","Bearer "+p.token)
+    if lookup(){return nil}
+    if endpoint==anilistGraphQL{
+        select{case p.aniListGate<-struct{}{}:
+            defer func(){<-p.aniListGate}()
+        case <-ctx.Done():return ctx.Err()}
+        // Another request may have filled the same cached ID while we waited.
+        if lookup(){return nil}
     }
-    resp,e:=p.client.Do(req);if e!=nil{return e}
-    defer resp.Body.Close()
-    raw,e:=io.ReadAll(io.LimitReader(resp.Body,8<<20));if e!=nil{return e}
-    if resp.StatusCode<200||resp.StatusCode>=300{
-        if len(raw)>180{raw=raw[:180]}
-        return fmt.Errorf("upstream HTTP %d: %s",resp.StatusCode,strings.TrimSpace(string(raw)))
+    if authorization&&p.token==""{return errors.New("TMDB_READ_TOKEN not configured")}
+    var last error
+    for attempt:=0;attempt<3;attempt++ {
+        var body io.Reader
+        if len(payload)>0 {body=bytes.NewReader(payload)}
+        req,e:=http.NewRequestWithContext(ctx,method,endpoint,body);if e!=nil{return e}
+        req.Header.Set("User-Agent","Sparkle-Anime-Metadata/0.1")
+        req.Header.Set("Accept","application/json")
+        if input!=nil{req.Header.Set("Content-Type","application/json")}
+        if authorization{req.Header.Set("Authorization","Bearer "+p.token)}
+        resp,e:=p.client.Do(req)
+        var raw []byte
+        var retryAfter time.Duration
+        if e==nil{
+            raw,e=io.ReadAll(io.LimitReader(resp.Body,8<<20))
+            resp.Body.Close()
+            if resp.StatusCode==429{
+                if seconds,nerr:=strconv.Atoi(resp.Header.Get("Retry-After"));nerr==nil&&seconds>0&&seconds<=5{
+                    retryAfter=time.Duration(seconds)*time.Second
+                }
+            }
+        }
+        retry:=false
+        if e!=nil{
+            last=e
+            retry=true
+        }else if resp.StatusCode<200||resp.StatusCode>=300{
+            if len(raw)>180{raw=raw[:180]}
+            last=fmt.Errorf("upstream HTTP %d: %s",resp.StatusCode,strings.TrimSpace(string(raw)))
+            retry=resp.StatusCode==429||resp.StatusCode>=500
+        }else{
+            if e=json.Unmarshal(raw,result);e!=nil{return fmt.Errorf("invalid upstream JSON: %w",e)}
+            // Do not cache rate-limited GraphQL 200 bodies carrying "errors".
+            if endpoint==anilistGraphQL{
+                var envelope struct{Errors []json.RawMessage `json:"errors"`}
+                if json.Unmarshal(raw,&envelope)==nil&&len(envelope.Errors)>0{
+                    return fmt.Errorf("AniList GraphQL errors: %s",string(envelope.Errors[0]))
+                }
+            }
+            if cacheFor>0{
+                p.mu.Lock()
+                if len(p.cache)>4000{
+                    for k,v:=range p.cache{
+                        if time.Now().After(v.expires){delete(p.cache,k)}
+                    }
+                    if len(p.cache)>4000 {
+                        for k:=range p.cache{delete(p.cache,k);if len(p.cache)<=3500{break}}
+                    }
+                }
+                p.cache[key]=cachedPayload{raw:raw,expires:time.Now().Add(cacheFor)}
+                p.mu.Unlock()
+            }
+            return nil
+        }
+        if !retry||attempt==2 {break}
+        delay:=time.Duration(300*(1<<attempt))*time.Millisecond
+        if retryAfter>delay{delay=retryAfter}
+        timer:=time.NewTimer(delay)
+        select{case <-ctx.Done():timer.Stop();return ctx.Err();case <-timer.C:}
     }
-    if e=json.Unmarshal(raw,result);e!=nil{return fmt.Errorf("invalid upstream JSON: %w",e)}
-    if cacheFor>0{
-        p.mu.Lock();p.cache[key]=cachedPayload{raw:raw,expires:time.Now().Add(cacheFor)};p.mu.Unlock()
-    }
-    return nil
+    return last
 }
 const anilistGraphQL = "https://graphql.anilist.co"
 const mediaQuery = `query ($id: Int) {
@@ -120,7 +177,7 @@ func(p *Providers) Anime(ctx context.Context,id int)(AniMedia,error){
     var result struct { Data struct { Media AniMedia `json:"Media"` } `json:"data"`; Errors []any `json:"errors"` }
     err:=p.doJSON(ctx,"POST",anilistGraphQL, map[string]any{
         "query":mediaQuery,"variables":map[string]int{"id":id},
-    },false,0,&result)
+    },false,6*time.Hour,&result)
     if err!=nil{return AniMedia{},err}
     if result.Data.Media.ID<=0{return AniMedia{},fmt.Errorf("AniList title %d not found / GraphQL errors %v",id,result.Errors)}
     return result.Data.Media,nil
@@ -135,7 +192,7 @@ func (p *Providers) Search(ctx context.Context,query string)([]AniMedia,error){
     var result struct { Data struct { Page struct { Media []AniMedia `json:"media"` } `json:"Page"` } `json:"data"`; Errors []any `json:"errors"` }
     err:=p.doJSON(ctx,"POST",anilistGraphQL,map[string]any{
         "query":gql,"variables":map[string]string{"search":query},
-    },false,0,&result)
+    },false,5*time.Minute,&result)
     if err!=nil{return nil,err}
     if result.Data.Page.Media==nil&&len(result.Errors)>0{return nil,fmt.Errorf("AniList search errors: %v",result.Errors)}
     return result.Data.Page.Media,nil
